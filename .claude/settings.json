@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "additionalDirectories": ["D:\\Antigravity projects\\novoscan-next"],
+    "allow": ["Read", "Glob", "Grep", "Bash(git status)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(npm run test:*)", "Bash(npm run lint)"],
+    "deny": ["Edit(D:\\Antigravity projects\\novoscan-next\\**)", "Write(D:\\Antigravity projects\\novoscan-next\\**)", "Bash(rm -rf:*)", "Bash(Remove-Item:*)", "Bash(git reset --hard:*)", "Bash(git push --force:*)"],
+    "ask": ["Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)", "Bash(npm install:*)"]
+  }
+}
