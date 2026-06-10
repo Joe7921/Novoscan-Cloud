@@ -88,6 +88,8 @@ export interface AgentOutput {
   dimensionScores: DimensionScore[];
   /** 超时/异常降级的 fallback 结果标记(区别于 AI 正常返回的低置信) */
   isFallback?: boolean;
+  /** 占位 stub 输出标记(阶段 3 骨架用,真 Agent 落地后移除) */
+  isStub?: boolean;
   /** 六维创新性雷达图(仅创新评估师输出) */
   innovationRadar?: InnovationRadarDimension[];
   /** 高相似度论文(仅学术审查员输出) */

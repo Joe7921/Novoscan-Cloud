@@ -79,3 +79,66 @@ docs/                   ← 本套文档
 - 记忆：旧 `agent_experiences`（升级 pgvector）
 - 类型：旧 `src/types.ts`、`src/agents/types.ts`
 - 全部事实见 `docs/OLD-CODEBASE-ANALYSIS.md`
+
+---
+
+## C. 阶段 3 详细设计（引擎骨架 / 产品的"心脏"）
+
+> 2026-06-10 敲定。目标:搭好引擎三大件,能真打通模型 + 按"配方"跑通完整分层流程(本阶段 Agent 用占位 stub,真 Agent 阶段 5)。骨架做**完整版**。
+
+### C.1 模型分工(混合;每个 step 可单独指定 provider/model)
+| 层 | Agent | 模型 | 说明 |
+|---|---|---|---|
+| L1 并行 | 学术/产业/竞品/跨域 | 国产三家(分散) | 量大、成本敏感;沿用旧库三模型分散策略 |
+| L2 | 创新评估师 | 国产 | 交叉质疑前三份,产出 6 维雷达 |
+| L2.5 | 辩论裁判 | **Sonnet 4.6** | 评分差>15 触发对抗辩论,推理质量关键 |
+| L3 | 仲裁员 | **Sonnet 4.6** | 加权仲裁=结论可信度核心 |
+| L4 | 质检 | 无 AI | 纯逻辑一致性检查 |
+
+- 国产三家:DeepSeek / Minimax / Moonshot,经 `@ai-sdk/openai-compatible` 接入。
+- Claude(Sonnet 4.6 `claude-sonnet-4-6`):经 **`@ai-sdk/anthropic`** 官方 provider(非套壳),复杂推理用 **adaptive thinking**。
+- 调用统一走 **Vercel AI SDK**,策略层(降级/熔断/Key池/退避)自研。
+
+### C.2 首条管线 = Novoscan 默认管线(通用型)
+- `id: "novoscan-default"`,`type: "通用型"`,名「Novoscan 默认管线」。
+- 平台开箱即用的通用分析管线;将来 Studio/市场的自制管线、行业定制管线都在它之外新增。
+- 它是 **Agentic Mode(施工第 3 步)的地基**:Agentic = 中心 ReAct 智能体自主"生成配方",前提是管线即可声明/热插拔的数据(铁律①)。
+
+### C.3 文件结构(`src/core/`)
+```
+core/
+  ai-client/   config.ts(常量集中) provider-registry.ts key-pool.ts
+               circuit-breaker.ts semaphore.ts parse.ts call.ts index.ts
+  agents/      types.ts(AgentDefinition 契约) registry.ts stubs.ts index.ts
+  pipeline/    types.ts registry.ts define.ts pipelines/novoscan-default.ts index.ts
+  orchestrator/ budget.ts timeout.ts orchestrator.ts index.ts
+```
+
+### C.4 ai-client 策略(参考旧库 1268 行重写,保留以下机制)
+- **降级链**:首选 70% 时间预算,备选平分剩余;限流/超时跳过重试直接降级。
+- **Key 池**:按 provider 多 Key,挑最空闲;acquire/release/markSuccess/markFailure。
+- **熔断**:连续失败 2 次 → 5min 冷却 → 半开探测(`providerCircuitMap`)。
+- **退避**:429/503 读 Retry-After,上限 2s,同模型最多重试 1 次。
+- **并发信号量**:high(主)/low(后台)两级。
+- **超时/中断**:单次 30s 默认、外部 AbortSignal 转发、流式空闲超时(min(60s,max(10s,80%)))。
+- **JSON 自愈解析**:```json 块 → 直解 → 花括号平衡 → 截断补全(四级)。
+- **成本限制**:本阶段留接口占位(`checkCostLimit`),后期接 Supabase 计量。
+
+### C.5 pipeline 契约(铁律①,旧库无对应、新增)
+- `PipelineDefinition`:id/version/name(双语)/type/description/layers[]/scoring(权重)/report(渲染配置)/plugins(沙箱接口雏形)。
+- `PipelineLayer`:id/mode(parallel|serial)/steps[]/majority?(2/3 早进)。
+- `PipelineStep`:id/agentRef/model?(provider+model 覆盖)/critical?(关键路径)/condition?(如 L2.5 辩论触发)。
+- `registry`:register/get/list(热插拔);`definePipeline` 辅助。
+
+### C.6 orchestrator(参考旧库 734 行重写为通用调度器,不写死 Agent)
+- 读 `PipelineDefinition` 按层跑;保留:2/3 多数即进(仅算非 fallback)、关键路径 vs 后台并行、condition 触发、时间预算分配(总 300s)、心跳进度、`onProgress`(progress/log/agent_state/agent_thinking)、降级不崩(超时标"部分结果")。
+- 辅助:`runWithTimeout`、时间预算 `budget`。
+
+### C.7 agents(本阶段占位)
+- `AgentDefinition`:`{ id; run(input, ctx): Promise<AgentOutput> }`;`registry` 注册表。
+- `stubs.ts`:各角色返回结构完整的假 `AgentOutput`(标 `isStub`),供空管线端到端跑通。真 Agent 阶段 5。
+
+### C.8 验收
+1. **调通模型**:`scripts/smoke-ai.mjs` 真打国产 + Claude 各一次,拿到回复。
+2. **跑通空管线**:`scripts/smoke-pipeline.mjs` 用 stub agents 跑完 `novoscan-default` 整条管线,产出结构完整的 `FinalReport`。
+3. `npx tsc --noEmit` 通过。

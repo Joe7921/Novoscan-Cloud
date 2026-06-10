@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**第一层·阶段 2（数据契约 + 记忆地基）已完成**(2026-06-10) —— 数据契约类型 + 两张 Supabase 表均就位,类型编译通过、表读写验证通过。下一步进入阶段 3(引擎骨架)。
+**第一层·阶段 3(引擎骨架)代码完成**(2026-06-10) —— `core/ai-client`+`agents`+`pipeline`+`orchestrator` 全部就位,`npx tsc --noEmit` 通过、空管线**验收②通过**;仅剩**验收①(真打模型)待填 AI Key** 后跑 `scripts/smoke-ai.ts`。
 
 ## 已完成
 
@@ -31,7 +31,13 @@
   - [x] 建表+读写验证脚本 `scripts/db-setup.mjs`(postgres 直连执行 DDL + 两表读写体检 + 清理);装 `postgres` devDep。
   - [x] 连库建表 + 读写验证(验收②):经 **Session pooler**(`aws-1-ap-northeast-2`;Direct 直连 `db.*.supabase.co` 因 IPv6-only 在本机 DNS 解析失败,故改 IPv4 兼容的 pooler)跑 `node scripts/db-setup.mjs`——两表建好、读写正常、tsvector 触发器生效、`embedding vector(1536)` 列就绪(待阶段 6 填充)。
   - [x] 地基加固(阶段 3 前置,2026-06-10):`lib/utils/query-hash.ts`(NFKC 归一化 + SHA-256,统一缓存/去重键);`lib/data/{search-history,agent-memory}.ts`(缓存读写 + 记忆沉淀/全文检索封装);`lib/types/supabase.ts`(`Database` 类型 → client 端到端类型安全)。`scripts/smoke-data.mjs` 实测 **secret key 经 PostgREST 可过 RLS 读写**(阶段 6 运行时通道验证可用)。
-- [ ] **下一步:第一层·阶段 3(引擎骨架)**:`core/pipeline` 管线接口+注册(铁律①);`core/orchestrator` 分层骨架;`core/ai-client`(Vercel AI SDK + 信号量/降级/熔断/Key池)。验收:脚本能调通模型、跑通空管线。详见 `PLAN.md`。
+- [~] **第一层·阶段 3:引擎骨架**(2026-06-10,代码完成,详见 `PLAN.md` C 部分)
+  - [x] `core/ai-client`:config/provider-registry/key-pool/circuit-breaker/semaphore/parse/call/index(Vercel AI SDK v6 + 降级链/熔断/Key池/退避/超时/JSON自愈/成本占位)。
+  - [x] `core/agents`:AgentDefinition 契约 + 8 个占位 stub(学术/产业/竞品/跨域/创新/辩论/仲裁/质检)。
+  - [x] `core/pipeline`:PipelineDefinition 契约 + 注册表 + 内置「Novoscan 默认管线」(`novoscan-default`,通用型)。
+  - [x] `core/orchestrator`:通用分层调度(majority 推进、关键路径vs后台、条件触发、时间预算、降级不崩、onProgress)。
+  - [x] 验收②(空管线):`npx tsx scripts/smoke-pipeline.ts` 跑通,报告结构完整、辩论条件正确跳过。tsc 通过。
+  - [ ] **待办(需用户)**:把 AI Key 填进 `.env.local`(`DEEPSEEK_API_KEY`/`MINIMAX_API_KEY`/`MOONSHOT_API_KEY`/`ANTHROPIC_API_KEY` 任一组)→ 跑 `npx tsx scripts/smoke-ai.ts` 完成**验收①**。
 - 后续阶段 4–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
@@ -41,6 +47,7 @@
 - 2026-06-10：记忆表由旧库纯 tsvector 升级为 **tsvector + pgvector 双检索**;旧表名 `agent_experiences` → 新表名 `agent_memory`。
 - 2026-06-10：Supabase 项目=`tmemhecjmlxdpwolltlv`(首尔 `ap-northeast-2`)。本机无 IPv6,**Direct 直连不可用**,数据库脚本固定走 **Session pooler**(`aws-1-ap-northeast-2.pooler.supabase.com:5432`,user=`postgres.<ref>`)。`.env.local` 已配 URL/publishable/secret/DATABASE_URL(均本地,git 忽略)。
 - 2026-06-10：技术坑记录——`createClient<Database>` 的 `Database` 类型里,表的 `Row`/`Insert` **必须用 `type` 而非 `interface`**(interface 不满足 supabase-js 要求的隐式索引签名,否则 upsert/insert 入参被推断成 `never`)。故 `db.ts` 四个表类型用 `type`。
+- 2026-06-10：阶段3 决策——① 混合模型:国产三家(DeepSeek/Minimax/Moonshot)打主力(L1 分散 + L2),**Sonnet 4.6** 用于 L2.5 辩论 + L3 仲裁(可信度核心);② 首条管线=「Novoscan 默认管线」(`novoscan-default`,通用型),自制/行业管线在其外新增,它是 Agentic Mode(施工第3步,**尚未开工**)的地基;③ AI SDK 实测 **v6**(`ai` 6.0.199 / `@ai-sdk/anthropic` 3 / `@ai-sdk/openai-compatible` 2),用 `maxOutputTokens`/`createOpenAICompatible`/`createAnthropic`;④ 国产默认模型名(minimax `MiniMax-Text-01`、moonshot `kimi-k2-0905-preview`)为推测值,可经 `*_MODEL` 环境变量覆盖。
 - 2026-06-10：⚠️ 待用户做的安全收尾——数据库密码与 `sb_secret_` 曾出现在对话中,建议全部弄完后在 Supabase 各 roll(重置)一次,并相应更新 `.env.local`。
 - 2026-06-09：技术栈由 AI 探测确认（Next.js 14/React/TS/Tailwind/Supabase/npm/Turbo）。
 - 2026-06-09：目标=网页应用 + 全栈重写（含 Agent 核心）；本期聚焦核心分析闭环。
