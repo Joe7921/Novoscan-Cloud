@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**第一层·阶段 1（工程骨架 + Claude Desktop 式外壳）已完成** —— 下一步进入阶段 2（数据契约 + 记忆地基）。
+**第一层·阶段 2（数据契约 + 记忆地基）已完成**(2026-06-10) —— 数据契约类型 + 两张 Supabase 表均就位,类型编译通过、表读写验证通过。下一步进入阶段 3(引擎骨架)。
 
 ## 已完成
 
@@ -24,11 +24,24 @@
 
 ## 进行中 / 下一步
 
-- [ ] **第一层·阶段 2:数据契约 + 记忆地基**:`lib/types` 核心类型;Supabase 建 `search_history`(缓存) + 记忆表(pgvector 骨架)。详见 `PLAN.md`。
-- 后续阶段 3–9 见 `PLAN.md` B 部分。
+- [x] **第一层·阶段 2:数据契约 + 记忆地基**（2026-06-10,已完成）
+  - [x] 数据契约 `src/lib/types/`:`common`/`search`/`agent`/`report`/`db`/`index` 六文件,参考旧库 `types.ts`+`agents/types.ts` 重写(非复制)。`npx tsc --noEmit` 通过。
+  - [x] 建表 migration `supabase/migrations/0001_stage2_data_foundation.sql`:`search_history`(缓存,query_hash+lang+mode 唯一,24h 过期,RLS) + `agent_memory`(记忆,tsvector 全文触发器 + **pgvector vector(1536)** 骨架 + HNSW 索引,RLS)。幂等可重复执行。
+  - [x] service_role 客户端 `src/lib/supabase/admin.ts`(运行时写缓存/记忆,后续阶段用);`.env.example` 增 `SUPABASE_SERVICE_ROLE_KEY`+`DATABASE_URL`。
+  - [x] 建表+读写验证脚本 `scripts/db-setup.mjs`(postgres 直连执行 DDL + 两表读写体检 + 清理);装 `postgres` devDep。
+  - [x] 连库建表 + 读写验证(验收②):经 **Session pooler**(`aws-1-ap-northeast-2`;Direct 直连 `db.*.supabase.co` 因 IPv6-only 在本机 DNS 解析失败,故改 IPv4 兼容的 pooler)跑 `node scripts/db-setup.mjs`——两表建好、读写正常、tsvector 触发器生效、`embedding vector(1536)` 列就绪(待阶段 6 填充)。
+  - [x] 地基加固(阶段 3 前置,2026-06-10):`lib/utils/query-hash.ts`(NFKC 归一化 + SHA-256,统一缓存/去重键);`lib/data/{search-history,agent-memory}.ts`(缓存读写 + 记忆沉淀/全文检索封装);`lib/types/supabase.ts`(`Database` 类型 → client 端到端类型安全)。`scripts/smoke-data.mjs` 实测 **secret key 经 PostgREST 可过 RLS 读写**(阶段 6 运行时通道验证可用)。
+- [ ] **下一步:第一层·阶段 3(引擎骨架)**:`core/pipeline` 管线接口+注册(铁律①);`core/orchestrator` 分层骨架;`core/ai-client`(Vercel AI SDK + 信号量/降级/熔断/Key池)。验收:脚本能调通模型、跑通空管线。详见 `PLAN.md`。
+- 后续阶段 4–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
 
+- 2026-06-10：仓库已推送 GitHub（`github.com/Joe7921/Novoscan-Cloud`,默认分支 `main`）;git 身份改为 `Joe7921 <zhouhaoyu6666@gmail.com>`,历史两次提交作者已改写。
+- 2026-06-10：阶段 2 决策——① 建表方式=用户提供 Supabase 连接凭据,我连库建表并验证（非让用户手动跑 SQL）;② pgvector 向量维度=**1536**（兼容 OpenAI text-embedding-3-small,一旦建表固定,改维度需迁移）。
+- 2026-06-10：记忆表由旧库纯 tsvector 升级为 **tsvector + pgvector 双检索**;旧表名 `agent_experiences` → 新表名 `agent_memory`。
+- 2026-06-10：Supabase 项目=`tmemhecjmlxdpwolltlv`(首尔 `ap-northeast-2`)。本机无 IPv6,**Direct 直连不可用**,数据库脚本固定走 **Session pooler**(`aws-1-ap-northeast-2.pooler.supabase.com:5432`,user=`postgres.<ref>`)。`.env.local` 已配 URL/publishable/secret/DATABASE_URL(均本地,git 忽略)。
+- 2026-06-10：技术坑记录——`createClient<Database>` 的 `Database` 类型里,表的 `Row`/`Insert` **必须用 `type` 而非 `interface`**(interface 不满足 supabase-js 要求的隐式索引签名,否则 upsert/insert 入参被推断成 `never`)。故 `db.ts` 四个表类型用 `type`。
+- 2026-06-10：⚠️ 待用户做的安全收尾——数据库密码与 `sb_secret_` 曾出现在对话中,建议全部弄完后在 Supabase 各 roll(重置)一次,并相应更新 `.env.local`。
 - 2026-06-09：技术栈由 AI 探测确认（Next.js 14/React/TS/Tailwind/Supabase/npm/Turbo）。
 - 2026-06-09：目标=网页应用 + 全栈重写（含 Agent 核心）；本期聚焦核心分析闭环。
 - 2026-06-09：免登录 / 仅标准深度模式 / 中英双语 / 沿用 Novoscan。
