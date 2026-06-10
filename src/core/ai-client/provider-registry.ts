@@ -17,9 +17,10 @@ export function resolveModelName(id: ProviderId, override?: string): string {
 
 function resolveBaseURL(id: ProviderId): string | undefined {
   const cfg = PROVIDERS[id];
-  if (cfg.kind !== "openai-compatible") return undefined;
   const fromEnv = cfg.envBaseUrl ? process.env[cfg.envBaseUrl] : undefined;
-  return fromEnv ?? cfg.baseURL;
+  // openai-compatible 必有 baseURL;anthropic 仅在 env 指定中转站时覆盖,否则用官方默认。
+  if (cfg.kind === "openai-compatible") return fromEnv ?? cfg.baseURL;
+  return fromEnv;
 }
 
 export function getModel(id: ProviderId, apiKey: string, modelOverride?: string): LanguageModel {
@@ -31,7 +32,8 @@ export function getModel(id: ProviderId, apiKey: string, modelOverride?: string)
   const cfg = PROVIDERS[id];
   let model: LanguageModel;
   if (cfg.kind === "anthropic") {
-    model = createAnthropic({ apiKey })(modelName);
+    const baseURL = resolveBaseURL(id);
+    model = createAnthropic({ apiKey, ...(baseURL ? { baseURL } : {}) })(modelName);
   } else {
     const baseURL = resolveBaseURL(id);
     if (!baseURL) throw new Error(`Provider ${id} 缺少 baseURL`);

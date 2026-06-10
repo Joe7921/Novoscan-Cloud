@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**第一层·阶段 4(双轨检索)学术轨完成**(2026-06-10) —— 学术四源 + 关键词 + **证据闸门(相关性重排过滤,治"垃圾进")** + 聚合,免费源真实验收通过(召回 16→闸门 15)。下一步:阶段4-B 产业轨 + 双轨交叉验证/可信度。(阶段3 验收①真打模型、阶段4 LLM 重排均待填 AI Key 后验证。)
+**第一层·阶段 4(双轨检索)学术轨完成**(2026-06-10) —— 学术四源 + 关键词 + **证据闸门(相关性重排过滤,治"垃圾进")** + 聚合,免费源真实验收通过(召回 16→闸门 15)。**验收①已通过**(DeepSeek `deepseek-v4-pro` + 中转站 Claude `claude-opus-4-7-thinking`),证据闸门 **LLM 重排实测生效**(弱相关被精准过滤)。下一步:阶段4-B 产业轨 + 双轨交叉验证/可信度。
 
 ## 已完成
 
@@ -54,6 +54,7 @@
 - 2026-06-10：记忆表由旧库纯 tsvector 升级为 **tsvector + pgvector 双检索**;旧表名 `agent_experiences` → 新表名 `agent_memory`。
 - 2026-06-10：Supabase 项目=`tmemhecjmlxdpwolltlv`(首尔 `ap-northeast-2`)。本机无 IPv6,**Direct 直连不可用**,数据库脚本固定走 **Session pooler**(`aws-1-ap-northeast-2.pooler.supabase.com:5432`,user=`postgres.<ref>`)。`.env.local` 已配 URL/publishable/secret/DATABASE_URL(均本地,git 忽略)。
 - 2026-06-10：技术坑记录——`createClient<Database>` 的 `Database` 类型里,表的 `Row`/`Insert` **必须用 `type` 而非 `interface`**(interface 不满足 supabase-js 要求的隐式索引签名,否则 upsert/insert 入参被推断成 `never`)。故 `db.ts` 四个表类型用 `type`。
+- 2026-06-11：模型落定——DeepSeek `deepseek-v4-pro`(双 key 池 NVC1/NVC2 轮换);Claude 走**中转站 Vectrust**(`ANTHROPIC_BASE_URL=https://api.openai-next.com/v1`、model `claude-opus-4-7-thinking`、x-api-key 鉴权);国产默认名升级 `deepseek-v4-flash`(旧 deepseek-chat 7/24 弃用)。验收①+证据闸门 LLM 重排实测通过。
 - 2026-06-10：检索质量决策——针对旧库「垃圾进垃圾出」(召回后无相关性过滤),新架构在「检索完 → 喂 Agent 前」加 **证据闸门**:相关性重排 + 过滤 + 充分性标记。重排策略 = **LLM 重排**(国产模型逐条打分),无 key 降级为规则排序(**不过滤**,避免跨语言误杀);将来可插 embedding 重排(阶段6)。
 - 2026-06-10：架构决策——Agentic 采用「**双轨并存 + 工具层统一**」(非替换固定管线):数据源与子 Agent 封装为统一 `EngineTool`,固定管线(可信模式)与 Agentic 模式(施工第3步)共享同一套工具。已建 `core/tools/`(契约+注册表+AI SDK 适配器)。阶段4 数据源、阶段5 子 Agent 按此实现。详见 ARCHITECTURE/PLAN。
 - 2026-06-10：阶段3 决策——① 混合模型:国产三家(DeepSeek/Minimax/Moonshot)打主力(L1 分散 + L2),**Sonnet 4.6** 用于 L2.5 辩论 + L3 仲裁(可信度核心);② 首条管线=「Novoscan 默认管线」(`novoscan-default`,通用型),自制/行业管线在其外新增,它是 Agentic Mode(施工第3步,**尚未开工**)的地基;③ AI SDK 实测 **v6**(`ai` 6.0.199 / `@ai-sdk/anthropic` 3 / `@ai-sdk/openai-compatible` 2),用 `maxOutputTokens`/`createOpenAICompatible`/`createAnthropic`;④ 国产默认模型名(minimax `MiniMax-Text-01`、moonshot `kimi-k2-0905-preview`)为推测值,可经 `*_MODEL` 环境变量覆盖。

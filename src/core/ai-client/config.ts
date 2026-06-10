@@ -22,7 +22,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     envApiKey: "DEEPSEEK_API_KEY",
     baseURL: "https://api.deepseek.com",
     envBaseUrl: "DEEPSEEK_BASE_URL",
-    defaultModel: "deepseek-chat",
+    defaultModel: "deepseek-v4-flash", // 新默认(旧 deepseek-chat 2026/07/24 弃用);可经 DEEPSEEK_MODEL 覆盖
     envModel: "DEEPSEEK_MODEL",
   },
   minimax: {
@@ -47,6 +47,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     id: "anthropic",
     kind: "anthropic",
     envApiKey: "ANTHROPIC_API_KEY",
+    envBaseUrl: "ANTHROPIC_BASE_URL", // 支持中转站(如 Vectrust);留空用官方端点
     defaultModel: "claude-sonnet-4-6",
     envModel: "ANTHROPIC_MODEL",
   },
