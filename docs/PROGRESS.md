@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**第一层·阶段 4(双轨检索)学术轨完成**(2026-06-10) —— 学术四源 + 关键词 + **证据闸门(相关性重排过滤,治"垃圾进")** + 聚合,免费源真实验收通过(召回 16→闸门 15)。**验收①已通过**(DeepSeek `deepseek-v4-pro` + 中转站 Claude `claude-opus-4-7-thinking`),证据闸门 **LLM 重排实测生效**(弱相关被精准过滤)。下一步:阶段4-B 产业轨 + 双轨交叉验证/可信度。
+**第一层·阶段 4(双轨检索)已完成**(2026-06-11) —— 学术轨 + 产业轨 + 双轨交叉验证/可信度 + 模型三档全部跑通验收。**证据闸门治住"垃圾进"**:学术召回 40→19 高相关、GitHub 英文搜+过滤剔除无关高星 repo、双轨可信度评分成型(实测 85/high)。验收①(真打模型)也已通过。下一步:阶段 5(第一条管线·真子 Agent)。
 
 ## 已完成
 
@@ -44,7 +44,8 @@
   - [x] **证据闸门** `rerank.ts`:相关性重排+过滤,治旧库"垃圾进垃圾出"——LLM 重排(国产 key)为主,无 key 退化为"只排序不过滤"(规则无跨语言语义,避免误杀)。
   - [x] 学术聚合 `academic-aggregate.ts` → `AcademicResult`(去重+证据闸门+统计);封装为 `search.academic` EngineTool。
   - [x] 验收:`npx tsx scripts/smoke-search.ts` 免费源真实返回 + 闸门 + 统计,tsc 通过。
-  - [ ] **下一步(阶段4-B)**:产业多源 + 降级链 + 引擎选择 + 双轨交叉验证/可信度评分。
+  - [x] 阶段4-B:产业六源(Brave/SerpAPI/Serper/Tavily/SearXNG/GitHub,无 key 自动跳过)+ 引擎选择(AI/规则)+ 产业聚合 + **双轨交叉验证/可信度评分**;封装 `search.industry`/`search.dual` EngineTool。`smoke-dual` 验收跑通(学术 19 + 开源 9 + 可信度 85)。
+  - [x] 模型三档(`callByTier`:fast 非思考/standard/strong)+ **GIGO 修复**(非思考模型做简单活、GitHub 英文搜+repos 过闸门、网页过闸门)。
 - 后续阶段 5–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
@@ -54,6 +55,8 @@
 - 2026-06-10：记忆表由旧库纯 tsvector 升级为 **tsvector + pgvector 双检索**;旧表名 `agent_experiences` → 新表名 `agent_memory`。
 - 2026-06-10：Supabase 项目=`tmemhecjmlxdpwolltlv`(首尔 `ap-northeast-2`)。本机无 IPv6,**Direct 直连不可用**,数据库脚本固定走 **Session pooler**(`aws-1-ap-northeast-2.pooler.supabase.com:5432`,user=`postgres.<ref>`)。`.env.local` 已配 URL/publishable/secret/DATABASE_URL(均本地,git 忽略)。
 - 2026-06-10：技术坑记录——`createClient<Database>` 的 `Database` 类型里,表的 `Row`/`Insert` **必须用 `type` 而非 `interface`**(interface 不满足 supabase-js 要求的隐式索引签名,否则 upsert/insert 入参被推断成 `never`)。故 `db.ts` 四个表类型用 `type`。
+- 2026-06-11：模型分档(`callByTier`)——fast=`deepseek-chat`(非思考:关键词/翻译/引擎选择/重排)、standard=`deepseek-v4-pro`(分析)、strong=中转站 Claude(辩论/仲裁)。**关键坑**:DeepSeek V4(flash/pro)是思考模型,小输出时 reasoning 吃光正文 → 简单活必须用非思考模型。
+- 2026-06-11：GIGO 修复——GitHub 改英文关键词搜(中文直搜召回无关高星 repo)+ repos 过证据闸门;产业网页/开源均过相关性过滤。证据闸门(学术/网页/开源)统一在 `rerank.ts`。
 - 2026-06-11：模型落定——DeepSeek `deepseek-v4-pro`(双 key 池 NVC1/NVC2 轮换);Claude 走**中转站 Vectrust**(`ANTHROPIC_BASE_URL=https://api.openai-next.com/v1`、model `claude-opus-4-7-thinking`、x-api-key 鉴权);国产默认名升级 `deepseek-v4-flash`(旧 deepseek-chat 7/24 弃用)。验收①+证据闸门 LLM 重排实测通过。
 - 2026-06-10：检索质量决策——针对旧库「垃圾进垃圾出」(召回后无相关性过滤),新架构在「检索完 → 喂 Agent 前」加 **证据闸门**:相关性重排 + 过滤 + 充分性标记。重排策略 = **LLM 重排**(国产模型逐条打分),无 key 降级为规则排序(**不过滤**,避免跨语言误杀);将来可插 embedding 重排(阶段6)。
 - 2026-06-10：架构决策——Agentic 采用「**双轨并存 + 工具层统一**」(非替换固定管线):数据源与子 Agent 封装为统一 `EngineTool`,固定管线(可信模式)与 Agentic 模式(施工第3步)共享同一套工具。已建 `core/tools/`(契约+注册表+AI SDK 适配器)。阶段4 数据源、阶段5 子 Agent 按此实现。详见 ARCHITECTURE/PLAN。

@@ -1,17 +1,12 @@
-// 证据闸门:相关性重排 + 过滤——治"垃圾进垃圾出"的核心。
-// 把检索召回的候选,按"与用户创意的真实相关性"打分,砍掉低相关、按分排序,
-// 只把高相关证据喂给下游 Agent。有国产 Key 用 LLM 打分,否则规则兜底。
+// 证据闸门:相关性重排 + 过滤——治"垃圾进垃圾出"的核心(学术 / 网页通用)。
+// 把召回的候选按"与用户创意的真实相关性"打分,砍低相关、按分排序。
+// 有国产 key 用 LLM 跨语言打分,否则规则兜底(仅排序不过滤,避免误杀)。
 
-import { callWithFallback, isProviderAvailable, parseAgentJSON } from "@/core/ai-client";
-import type { AcademicPaper } from "@/lib/types";
-
-export interface RerankedResult {
-  paper: AcademicPaper;
-  relevance: number; // 0-100
-}
+import { callByTier, isProviderAvailable, parseAgentJSON } from "@/core/ai-client";
+import type { AcademicPaper, GithubRepo, WebResult } from "@/lib/types";
 
 export interface RerankOptions {
-  minRelevance?: number; // 低于此分丢弃
+  minRelevance?: number;
 }
 
 function hasAIKey(): boolean {
@@ -26,29 +21,28 @@ function tokenize(text: string): string[] {
   return [...text.toLowerCase().matchAll(/[一-龥]{2,}|[a-z][a-z0-9.+-]+/g)].map((m) => m[0]);
 }
 
-// 规则打分(0-100):关键词命中 60 + 引用 20 + 时近 15 + 开放 5。
-function ruleScore(query: string, p: AcademicPaper): number {
+function keywordHitScore(query: string, text: string): number {
   const terms = tokenize(query);
-  const text = `${p.title ?? ""} ${p.description ?? ""}`.toLowerCase();
-  const hitRatio = terms.length ? terms.filter((t) => text.includes(t)).length / terms.length : 0;
-  const hitScore = hitRatio * 60;
-  const citeScore = Math.min(20, Math.log10((p.citationCount ?? 0) + 1) * 7);
-  const yearScore = !p.year ? 0 : p.year >= 2022 ? 15 : p.year >= 2019 ? 8 : 3;
-  const oaScore = p.isOpenAccess || p.pdfUrl ? 5 : 0;
-  return Math.round(hitScore + citeScore + yearScore + oaScore);
+  if (!terms.length) return 0;
+  const lower = text.toLowerCase();
+  return (terms.filter((t) => lower.includes(t)).length / terms.length) * 60;
 }
 
-// LLM 批量打分:一次调用给每条候选打相关性分。
-async function llmScores(query: string, papers: AcademicPaper[]): Promise<number[]> {
-  const list = papers
-    .map((p, i) => `[${i}] ${p.title ?? "(无题)"}${p.description ? ` — ${p.description.slice(0, 160)}` : ""}`)
+interface ScoreItem {
+  title?: string;
+  snippet?: string;
+}
+
+// LLM 批量打分:一次调用给每条候选打 0-100 相关性分。
+async function llmScores(query: string, items: ScoreItem[]): Promise<number[]> {
+  const list = items
+    .map((it, i) => `[${i}] ${it.title ?? "(无题)"}${it.snippet ? ` — ${it.snippet.slice(0, 160)}` : ""}`)
     .join("\n");
-  const r = await callWithFallback({
-    provider: "deepseek",
+  const r = await callByTier("fast", {
     prompt:
-      `用户创意:\n"""${query}"""\n\n下面是检索到的候选论文。请判断每一条与该创意的"相关性",` +
+      `用户创意:\n"""${query}"""\n\n下面是检索到的候选资料。请判断每一条与该创意的"相关性",` +
       `打 0-100 分(越相关越高,完全无关给 0)。只输出 JSON 数组,形如 [{"i":0,"score":85}],不要任何解释:\n\n${list}`,
-    maxOutputTokens: Math.min(4000, papers.length * 30 + 200),
+    maxOutputTokens: Math.min(4000, items.length * 30 + 200),
     temperature: 0,
     timeoutMs: 30_000,
   });
@@ -61,10 +55,24 @@ async function llmScores(query: string, papers: AcademicPaper[]): Promise<number
       }
     }
   }
-  return papers.map((_, i) => map.get(i) ?? 0);
+  return items.map((_, i) => map.get(i) ?? 0);
 }
 
-/** 相关性重排 + 过滤。返回按相关性降序、已剔除低相关的结果。 */
+// ==================== 学术 ====================
+
+export interface RerankedResult {
+  paper: AcademicPaper;
+  relevance: number;
+}
+
+function academicRuleScore(query: string, p: AcademicPaper): number {
+  const hit = keywordHitScore(query, `${p.title ?? ""} ${p.description ?? ""}`);
+  const cite = Math.min(20, Math.log10((p.citationCount ?? 0) + 1) * 7);
+  const year = !p.year ? 0 : p.year >= 2022 ? 15 : p.year >= 2019 ? 8 : 3;
+  const oa = p.isOpenAccess || p.pdfUrl ? 5 : 0;
+  return Math.round(hit + cite + year + oa);
+}
+
 export async function rerankAcademic(
   query: string,
   papers: AcademicPaper[],
@@ -72,23 +80,87 @@ export async function rerankAcademic(
 ): Promise<RerankedResult[]> {
   if (papers.length === 0) return [];
   const useLLM = hasAIKey();
-  // 无 AI key:规则无跨语言语义判断,退化为"只排序不过滤"(避免误杀);
-  // 治"垃圾进"的真正过滤由 LLM 重排承担(配国产 key 后自动启用)。
   const minRelevance = opts.minRelevance ?? (useLLM ? 40 : 0);
-
   let scores: number[];
   if (useLLM) {
     try {
-      scores = await llmScores(query, papers);
+      scores = await llmScores(query, papers.map((p) => ({ title: p.title, snippet: p.description })));
     } catch {
-      scores = papers.map((p) => ruleScore(query, p));
+      scores = papers.map((p) => academicRuleScore(query, p));
     }
   } else {
-    scores = papers.map((p) => ruleScore(query, p));
+    scores = papers.map((p) => academicRuleScore(query, p));
   }
-
   return papers
     .map((paper, i) => ({ paper, relevance: scores[i] ?? 0 }))
+    .filter((r) => r.relevance >= minRelevance)
+    .sort((a, b) => b.relevance - a.relevance);
+}
+
+// ==================== 网页(产业) ====================
+
+export interface RerankedWeb {
+  item: WebResult;
+  relevance: number;
+}
+
+function webRuleScore(query: string, w: WebResult): number {
+  return Math.round(keywordHitScore(query, `${w.title ?? ""} ${w.snippet ?? w.description ?? ""}`));
+}
+
+export async function rerankWeb(
+  query: string,
+  items: WebResult[],
+  opts: RerankOptions = {},
+): Promise<RerankedWeb[]> {
+  if (items.length === 0) return [];
+  const useLLM = hasAIKey();
+  const minRelevance = opts.minRelevance ?? (useLLM ? 40 : 0);
+  let scores: number[];
+  if (useLLM) {
+    try {
+      scores = await llmScores(query, items.map((w) => ({ title: w.title, snippet: w.snippet ?? w.description })));
+    } catch {
+      scores = items.map((w) => webRuleScore(query, w));
+    }
+  } else {
+    scores = items.map((w) => webRuleScore(query, w));
+  }
+  return items
+    .map((item, i) => ({ item, relevance: scores[i] ?? 0 }))
+    .filter((r) => r.relevance >= minRelevance)
+    .sort((a, b) => b.relevance - a.relevance);
+}
+
+// ==================== 开源(GitHub) ====================
+
+export interface RerankedRepo {
+  repo: GithubRepo;
+  relevance: number;
+}
+
+export async function rerankGithub(
+  query: string,
+  repos: GithubRepo[],
+  opts: RerankOptions = {},
+): Promise<RerankedRepo[]> {
+  if (repos.length === 0) return [];
+  const useLLM = hasAIKey();
+  const minRelevance = opts.minRelevance ?? (useLLM ? 40 : 0);
+  const ruleScore = (r: GithubRepo) =>
+    Math.round(keywordHitScore(query, `${r.fullName ?? ""} ${r.description ?? ""}`));
+  let scores: number[];
+  if (useLLM) {
+    try {
+      scores = await llmScores(query, repos.map((r) => ({ title: r.fullName ?? r.name, snippet: r.description })));
+    } catch {
+      scores = repos.map(ruleScore);
+    }
+  } else {
+    scores = repos.map(ruleScore);
+  }
+  return repos
+    .map((repo, i) => ({ repo, relevance: scores[i] ?? 0 }))
     .filter((r) => r.relevance >= minRelevance)
     .sort((a, b) => b.relevance - a.relevance);
 }

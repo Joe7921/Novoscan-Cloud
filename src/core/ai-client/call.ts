@@ -8,6 +8,8 @@ import {
   MAX_PROMPT_LENGTH,
   RETRY,
   TIMEOUTS,
+  resolveTier,
+  type ModelTier,
   type ProviderId,
 } from "./config";
 import { isCircuitOpen, recordFailure, recordSuccess } from "./circuit-breaker";
@@ -152,4 +154,13 @@ export async function callWithFallback(opts: CallOptions): Promise<AIResult> {
     }
   }
   throw lastErr ?? new Error("无可用 provider(检查 API Key 与熔断状态)");
+}
+
+/** 按档位调用(fast/standard/strong):自动解析 provider+model,带降级链。 */
+export function callByTier(
+  tier: ModelTier,
+  opts: Omit<CallOptions, "provider" | "model">,
+): Promise<AIResult> {
+  const spec = resolveTier(tier);
+  return callWithFallback({ ...opts, provider: spec.provider, model: spec.model });
 }

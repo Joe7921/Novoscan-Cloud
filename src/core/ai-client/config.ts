@@ -87,3 +87,30 @@ export const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
 
 // 降级链首选时间预算占比(其余备选平分剩余)。
 export const PRIMARY_BUDGET_RATIO = 0.7;
+
+// ==================== 模型档位:按任务复杂度派模型 ====================
+// fast=简单活(关键词/翻译/引擎选择);standard=中等(重排/L1·L2 分析);strong=复杂(辩论/仲裁)。
+// 各档可经环境变量覆盖,集中一处管理。
+export type ModelTier = "fast" | "standard" | "strong";
+
+export interface TierSpec {
+  provider: ProviderId;
+  model?: string; // 留空时用该 provider 的默认(envModel/defaultModel)
+}
+
+export function resolveTier(tier: ModelTier): TierSpec {
+  switch (tier) {
+    case "fast":
+      // 非思考模型:简单活要正文直出。v4-flash/v4-pro 是思考模型,小输出会被 reasoning 吃光正文。
+      // deepseek-chat = v4-flash 的非思考模式(2026/07/24 前迁移到 v4-flash 非思考参数)。
+      return { provider: "deepseek", model: process.env.TIER_FAST_MODEL ?? "deepseek-chat" };
+    case "standard":
+      return { provider: "deepseek", model: process.env.TIER_STANDARD_MODEL ?? "deepseek-v4-pro" };
+    case "strong":
+      // anthropic(中转站 claude-opus-4-7-thinking,经 ANTHROPIC_MODEL);可用 TIER_STRONG_* 覆盖
+      return {
+        provider: (process.env.TIER_STRONG_PROVIDER as ProviderId) ?? "anthropic",
+        model: process.env.TIER_STRONG_MODEL,
+      };
+  }
+}

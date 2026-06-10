@@ -3,6 +3,7 @@
 export * from "./config";
 export {
   callAI,
+  callByTier,
   callWithFallback,
   checkCostLimit,
   isProviderAvailable,

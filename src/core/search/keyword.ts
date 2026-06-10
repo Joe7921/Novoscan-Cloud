@@ -1,7 +1,7 @@
 // 关键词提取 + 中英双语变体。AI(国产模型)优先,无 key 降级本地分词。
 // 参考旧库 query-keyword-extractor / dual-track-utils 重写。
 
-import { callWithFallback, isProviderAvailable, parseAgentJSON } from "@/core/ai-client";
+import { callByTier, isProviderAvailable, parseAgentJSON } from "@/core/ai-client";
 
 const STOPWORDS = new Set([
   // 中文虚词
@@ -38,8 +38,7 @@ function localExtract(query: string): string[] {
 }
 
 async function aiExtract(query: string): Promise<string[]> {
-  const r = await callWithFallback({
-    provider: "deepseek",
+  const r = await callByTier("fast", {
     prompt: `从下面的创意中提取 5-8 个最适合学术/产业检索的核心关键词。只输出 JSON 字符串数组,如 ["关键词1","关键词2"],不要任何解释:\n\n${query}`,
     maxOutputTokens: 200,
     temperature: 0,
@@ -72,8 +71,7 @@ export async function buildQueryVariants(query: string): Promise<string[]> {
   const variants = [base.join(" ")];
   if (containsChinese(query) && hasAIKey()) {
     try {
-      const r = await callWithFallback({
-        provider: "deepseek",
+      const r = await callByTier("fast", {
         prompt: `把下面的创意翻译并提炼成 5-8 个英文学术检索关键词,只输出空格分隔的英文词,不要解释:\n\n${query}`,
         maxOutputTokens: 100,
         temperature: 0,
