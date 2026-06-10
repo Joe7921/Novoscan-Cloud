@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**第一层·阶段 3(引擎骨架)代码完成**(2026-06-10) —— `core/ai-client`+`agents`+`pipeline`+`orchestrator` 全部就位,`npx tsc --noEmit` 通过、空管线**验收②通过**;仅剩**验收①(真打模型)待填 AI Key** 后跑 `scripts/smoke-ai.ts`。
+**第一层·阶段 4(双轨检索)学术轨完成**(2026-06-10) —— 学术四源 + 关键词 + **证据闸门(相关性重排过滤,治"垃圾进")** + 聚合,免费源真实验收通过(召回 16→闸门 15)。下一步:阶段4-B 产业轨 + 双轨交叉验证/可信度。(阶段3 验收①真打模型、阶段4 LLM 重排均待填 AI Key 后验证。)
 
 ## 已完成
 
@@ -38,7 +38,14 @@
   - [x] `core/orchestrator`:通用分层调度(majority 推进、关键路径vs后台、条件触发、时间预算、降级不崩、onProgress)。
   - [x] 验收②(空管线):`npx tsx scripts/smoke-pipeline.ts` 跑通,报告结构完整、辩论条件正确跳过。tsc 通过。
   - [ ] **待办(需用户)**:把 AI Key 填进 `.env.local`(`DEEPSEEK_API_KEY`/`MINIMAX_API_KEY`/`MOONSHOT_API_KEY`/`ANTHROPIC_API_KEY` 任一组)→ 跑 `npx tsx scripts/smoke-ai.ts` 完成**验收①**。
-- 后续阶段 4–9 见 `PLAN.md` B 部分。
+- [~] **第一层·阶段 4:双轨检索**(2026-06-10,学术轨完成)
+  - [x] 学术四源 `core/search/academic/`:OpenAlex/arXiv/CrossRef(免费真接)+ CORE(按 key);各源失败优雅返回空。
+  - [x] 关键词提取 + 中英双语变体 `keyword.ts`(AI 优先,无 key 本地分词降级)。
+  - [x] **证据闸门** `rerank.ts`:相关性重排+过滤,治旧库"垃圾进垃圾出"——LLM 重排(国产 key)为主,无 key 退化为"只排序不过滤"(规则无跨语言语义,避免误杀)。
+  - [x] 学术聚合 `academic-aggregate.ts` → `AcademicResult`(去重+证据闸门+统计);封装为 `search.academic` EngineTool。
+  - [x] 验收:`npx tsx scripts/smoke-search.ts` 免费源真实返回 + 闸门 + 统计,tsc 通过。
+  - [ ] **下一步(阶段4-B)**:产业多源 + 降级链 + 引擎选择 + 双轨交叉验证/可信度评分。
+- 后续阶段 5–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
 
@@ -47,6 +54,7 @@
 - 2026-06-10：记忆表由旧库纯 tsvector 升级为 **tsvector + pgvector 双检索**;旧表名 `agent_experiences` → 新表名 `agent_memory`。
 - 2026-06-10：Supabase 项目=`tmemhecjmlxdpwolltlv`(首尔 `ap-northeast-2`)。本机无 IPv6,**Direct 直连不可用**,数据库脚本固定走 **Session pooler**(`aws-1-ap-northeast-2.pooler.supabase.com:5432`,user=`postgres.<ref>`)。`.env.local` 已配 URL/publishable/secret/DATABASE_URL(均本地,git 忽略)。
 - 2026-06-10：技术坑记录——`createClient<Database>` 的 `Database` 类型里,表的 `Row`/`Insert` **必须用 `type` 而非 `interface`**(interface 不满足 supabase-js 要求的隐式索引签名,否则 upsert/insert 入参被推断成 `never`)。故 `db.ts` 四个表类型用 `type`。
+- 2026-06-10：检索质量决策——针对旧库「垃圾进垃圾出」(召回后无相关性过滤),新架构在「检索完 → 喂 Agent 前」加 **证据闸门**:相关性重排 + 过滤 + 充分性标记。重排策略 = **LLM 重排**(国产模型逐条打分),无 key 降级为规则排序(**不过滤**,避免跨语言误杀);将来可插 embedding 重排(阶段6)。
 - 2026-06-10：架构决策——Agentic 采用「**双轨并存 + 工具层统一**」(非替换固定管线):数据源与子 Agent 封装为统一 `EngineTool`,固定管线(可信模式)与 Agentic 模式(施工第3步)共享同一套工具。已建 `core/tools/`(契约+注册表+AI SDK 适配器)。阶段4 数据源、阶段5 子 Agent 按此实现。详见 ARCHITECTURE/PLAN。
 - 2026-06-10：阶段3 决策——① 混合模型:国产三家(DeepSeek/Minimax/Moonshot)打主力(L1 分散 + L2),**Sonnet 4.6** 用于 L2.5 辩论 + L3 仲裁(可信度核心);② 首条管线=「Novoscan 默认管线」(`novoscan-default`,通用型),自制/行业管线在其外新增,它是 Agentic Mode(施工第3步,**尚未开工**)的地基;③ AI SDK 实测 **v6**(`ai` 6.0.199 / `@ai-sdk/anthropic` 3 / `@ai-sdk/openai-compatible` 2),用 `maxOutputTokens`/`createOpenAICompatible`/`createAnthropic`;④ 国产默认模型名(minimax `MiniMax-Text-01`、moonshot `kimi-k2-0905-preview`)为推测值,可经 `*_MODEL` 环境变量覆盖。
 - 2026-06-10：⚠️ 待用户做的安全收尾——数据库密码与 `sb_secret_` 曾出现在对话中,建议全部弄完后在 Supabase 各 roll(重置)一次,并相应更新 `.env.local`。
