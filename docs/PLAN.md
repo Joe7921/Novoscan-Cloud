@@ -142,3 +142,20 @@ core/
 1. **调通模型**:`scripts/smoke-ai.mjs` 真打国产 + Claude 各一次,拿到回复。
 2. **跑通空管线**:`scripts/smoke-pipeline.mjs` 用 stub agents 跑完 `novoscan-default` 整条管线,产出结构完整的 `FinalReport`。
 3. `npx tsc --noEmit` 通过。
+
+---
+
+## D. 工具层统一契约(双轨地基,2026-06-10)
+
+决策:Agentic 采用「**双轨并存 + 工具层统一**」(非替换固定管线)。详见 `ARCHITECTURE.md` 「双轨执行与工具层」。
+
+**已建 `core/tools/`:**
+- `types.ts`:`EngineTool<I,O>`(id/category/title/description/inputSchema(zod)/execute)、`ToolContext`、`AnyEngineTool`。
+- `registry.ts`:工具注册表(register/get/list/byCategory,热插拔)。
+- `ai-sdk-adapter.ts`:`toAISDKTool`/`toAISDKToolSet` —— EngineTool → Vercel AI SDK tool(供 Agentic 第3步复用)。
+
+**对阶段 4/5 的调整:**
+- 阶段 4:检索源实现为 `EngineTool`(category=`datasource`)并注册;聚合/引擎选择照旧。
+- 阶段 5:真子 Agent 实现为 `EngineTool`(category=`agent`),替换阶段 3 占位 stub;管线 step 由"引用 agentRef"升级为"引用 toolId + 入参映射(从 results 构造 input)",orchestrator 相应小改。
+- 阶段 3 占位 stub 暂留,阶段 5 平滑迁移,不返工已验证部分。
+- Agentic 模式(施工第 3 步)直接复用工具表 + 适配器,届时加中心 ReAct 智能体。
