@@ -159,3 +159,46 @@ core/
 - 阶段 5:真子 Agent 实现为 `EngineTool`(category=`agent`),替换阶段 3 占位 stub;管线 step 由"引用 agentRef"升级为"引用 toolId + 入参映射(从 results 构造 input)",orchestrator 相应小改。
 - 阶段 3 占位 stub 暂留,阶段 5 平滑迁移,不返工已验证部分。
 - Agentic 模式(施工第 3 步)直接复用工具表 + 适配器,届时加中心 ReAct 智能体。
+
+---
+
+## E. 阶段 5 详细设计(第一条管线·真子 Agent,2026-06-11 敲定,方向 A:完整做)
+
+> 目标:把 8 个占位 stub 全部换成真 Agent,给定真实双轨检索结果,跑完 `novoscan-default` 整条管线,产出第一份**完整可信报告**(含辩论与加权仲裁透明)。本阶段纯引擎层,不碰前端;网页接口与页面在阶段 6/7。
+>
+> **状态:已实施完成并合并**(2026-06-11,云端会话分支 `ca93386` 并入 main)。下文为设计稿,与实际实现的差异已就地修订标注;实测验收与踩坑见 `PROGRESS.md`。
+
+### E.1 总体原则
+- **延续治 GIGO**:每个 Agent 的 Prompt 注入"带编号的证据清单"(由阶段 4 闸门后的检索结果格式化而来),要求结论必须引用证据编号;`evidenceSources` 只能来自给定证据,降低幻觉。
+- **模型分档复用 `callByTier`**:L1/L2 用 standard(`deepseek-v4-pro`),L2.5 辩论 + L3 仲裁用 strong(中转站 Claude),证据格式化/小整理活用 fast(非思考)。管线里 minimax/moonshot 声明保留,无 key 时由降级链自动落回 DeepSeek(已验证机制)。
+- **JSON 结构化输出**:Prompt 给出严格 JSON schema 示例 + `parse.ts` 四级自愈解析 + 字段兜底(缺字段填默认值并降置信),任何一步解析失败返回 `isFallback` 输出,**不崩管线**。
+- **双语**:Prompt 按 `input.language` 指定输出语言(报告正文跟用户语言走)。
+- **参考旧库重写**:旧 `src/agents/` 各角色的 Prompt 思路与评分口径仅作参考,在新工作区按新契约重写,不复制。
+- **省钱开关**:smoke 脚本支持 `--cheap` 把全部档位压到 fast,供反复调试;正式验收用正常档位跑。
+
+### E.2 工具化迁移(衔接 D 部分;按实施修订)
+1. `core/agents/shared.ts` 收口公共辅助(证据/文本截断、输出归一化、推荐等级阈值、语言指令、领域块)。
+2. 每个真 Agent 实现为 `EngineTool`(category=`agent`)注册进工具表——管线与 Agentic(第 3 步)共享同一套工具。
+3. **(实施比设计更进一步)**`PipelineStep` 增 `toolRef + mapInput`(入参从前序结果显式映射),orchestrator 走工具执行路径;`novoscan-default` 全部 step 已切换 `toolRef`。`agentRef` 保留兼容阶段 3 stub(`smoke-pipeline.ts` 无 Key 结构性冒烟仍可跑)。
+
+### E.3 八个 Agent 的职责与要点
+| Agent | 层/模型档 | 输入 | 输出要点 |
+|---|---|---|---|
+| 学术审查员 `academic` | L1·standard | query + 学术证据清单 | 学术新颖性分析、score、`similarPapers`(相似度+核心差异+可点 URL) |
+| 产业分析员 `industry` | L1·standard | query + 产业网页证据 | 市场/落地分析、score、关键发现/红旗 |
+| 竞品侦探 `competitor` | L1·standard | query + 开源 repo + 网页证据 | 竞品格局、同类产品点名、差异化空间、score |
+| 跨域侦察兵 `crossDomain` | L1 后台·standard | query + 双轨摘要 | `bridges`(跨域迁移桥)+ 知识图谱 + `transferSummary`;非关键,失败不阻塞 |
+| 创新评估师 `innovation` | L2·standard | query + L1 三份输出 | 交叉质疑 + 六维雷达 `innovationRadar`(逐维 reasoning)+ score |
+| 辩论裁判 `debate` | L2.5·裁判 strong/攻防 fast | 分歧双方输出 | 条件触发(分差>15):多轮真对抗(攻防短输出走 fast 非思考档,防 reasoning 吃光正文;裁判走 strong)+ 收敛检测 + `dissentReport` 异议保留;`isFallback` 降级 Agent 不参与辩论(防逼模型编证据) |
+| 仲裁员 `arbitration` | L3·strong | 全部前序输出 | 加权评分透明(`weightedBreakdown` 按管线 scoring 权重)、总分、结论、`nextSteps`、共识度、异议 |
+| 质检 `quality` | L4·无 AI | FinalReport 雏形 | 纯逻辑:评分-结论一致性、加权和≈总分、必填字段齐全、证据引用编号有效;产出 warnings/corrections |
+
+### E.4 实施要点(按实施修订)
+- 仲裁加权明细(`weightedBreakdown`)由**代码预计算后回填**,模型只输出 summary/score/裁决文本——防模型自报数字算错,保证透明数据准确。
+- 创新评估师带"防退化重试"(六维雷达全同分视为退化);跨域侦察兵为后台非关键,失败不阻塞。
+- **超时校准(实测)**:思考模型大 prompt+16K 输出单次 90-110s 属常态;`agentMs` 70→120s、`arbitratorMs` 95→150s、总预算 300→480s,学术/跨域单 step 放宽 200s。
+
+### E.5 验收结果(2026-06-11 实测)
+1. ✅ `npx tsx scripts/smoke-agents.ts` 真实 AI 端到端 **6/6 通过**:四核心 Agent 真实完成(学术 65/产业 30/竞品 85/创新 28,独立评分)、六维雷达非退化、辩论真实触发 3 轮、仲裁产出「谨慎考虑 42 分」、质检 passed=true,全程无 `isStub`。
+2. ✅ `npx tsc --noEmit` 通过;`smoke-pipeline.ts` 改为 stub 克隆管线只验结构(无 Key 可跑)。
+3. ⚠️ 已知待优化(阶段 6 前):跨域侦察兵(输出最大)偶发 JSON 截断解析失败,需提高其 `maxOutputTokens` 或拆分输出;CLI 跑脚本须清除 shell 预置的 `ANTHROPIC_*` 环境变量(详见 PROGRESS 决策记录)。
