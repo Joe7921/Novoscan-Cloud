@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-**第一层·阶段 4(双轨检索)已完成**(2026-06-11) —— 学术轨 + 产业轨 + 双轨交叉验证/可信度 + 模型三档全部跑通验收。**证据闸门治住"垃圾进"**:学术召回 40→19 高相关、GitHub 英文搜+过滤剔除无关高星 repo、双轨可信度评分成型(实测 85/high)。验收①(真打模型)也已通过。下一步:阶段 5(第一条管线·真子 Agent)。
+**第一层·阶段 5(第一条管线·真子 Agent)已完成**(2026-06-11) —— 8 个占位 stub 全部替换为真子 Agent(实现为 `EngineTool`,category=agent),`novoscan-default` 管线升级 `toolRef + mapInput`,经真实 AI 端到端跑通:双轨检索 → L1(学术/产业/竞品/跨域)→ L2 创新评估(六维雷达)→ L2.5 条件辩论(NovoDebate 多轮真对抗)→ L3 仲裁(透明加权)→ L4 质检。**实测验收 6/6 通过**:四核心 Agent 真实完成(学术 65/产业 30/竞品 85/创新 28,各自独立评分)、六维雷达非退化、辩论触发 3 轮、仲裁产出「谨慎考虑 42 分」决策摘要、质检 passed=true。下一步:阶段 6(analyze SSE 接口 + 缓存/记忆沉淀)。
 
 ## 已完成
 
@@ -46,10 +46,22 @@
   - [x] 验收:`npx tsx scripts/smoke-search.ts` 免费源真实返回 + 闸门 + 统计,tsc 通过。
   - [x] 阶段4-B:产业六源(Brave/SerpAPI/Serper/Tavily/SearXNG/GitHub,无 key 自动跳过)+ 引擎选择(AI/规则)+ 产业聚合 + **双轨交叉验证/可信度评分**;封装 `search.industry`/`search.dual` EngineTool。`smoke-dual` 验收跑通(学术 19 + 开源 9 + 可信度 85)。
   - [x] 模型三档(`callByTier`:fast 非思考/standard/strong)+ **GIGO 修复**(非思考模型做简单活、GitHub 英文搜+repos 过闸门、网页过闸门)。
-- 后续阶段 5–9 见 `PLAN.md` B 部分。
+- [x] **第一层·阶段 5:第一条管线·真子 Agent**(2026-06-11,已完成)
+  - [x] 工具层迁移:8 个 Agent 实现为 `EngineTool`(`core/agents/*.ts`,category=agent),注册进工具表;`core/agents/shared.ts` 收口公共辅助(截断/归一化/阈值/语言/领域块)。
+  - [x] L1:学术审查员(相似论文对比)、产业分析员(GitHub≤15% 纠偏)、竞品侦探(竞品≠开源纠偏)、跨域侦察兵(底层原理迁移+知识图谱,后台非关键)。
+  - [x] L2 创新评估师(交叉质疑 + 六维雷达 + 防退化重试);L2.5 NovoDebate 辩论引擎(挑战/反驳/裁判独立调用,攻防走 fast 档、裁判走 strong 档,收敛检测+降级纯逻辑裁判);L3 仲裁员(动态权重+冲突矩阵+辩论/跨域注入+透明加权,加权明细由代码回填保证准确);L4 质检(纯逻辑零 AI)。
+  - [x] 编排器升级:`PipelineStep` 增 `toolRef + mapInput`(toolRef 优先,agentRef 兼容 stub);`orchestrator.runStep` 走工具执行路径(`tool.inputSchema.parse(mapInput(...))`);默认管线 step 全部改 toolRef,模型按三档分派。
+  - [x] **超时校准(实测)**:思考模型大 prompt+16K 输出单次可达 90-110s。`TIMEOUTS.agentMs` 70→120s、`arbitratorMs` 95→150s、总预算 300→480s;学术/跨域(大输出)单 step 放宽到 200s。
+  - [x] 辩论 GIGO 修复:`isFallback` 降级占位 Agent 不参与辩论(避免逼模型编证据)。
+  - [x] 验收:`scripts/smoke-agents.ts` 真实 AI 端到端 6/6 通过;`scripts/smoke-pipeline.ts` 改为 stub 克隆管线只验结构(无 Key 可跑);`npx tsc --noEmit` 通过。
+- 后续阶段 6–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
 
+- 2026-06-11：阶段 5 决策——① Agent 落地为 `EngineTool`(非旧库的裸函数),管线 step 由 `agentRef` 升级为 `toolRef + mapInput`(入参从前序结果显式映射),与 Agentic 模式(施工第3步)共享同一套工具,零返工;阶段 3 stub 经 `agentRef` 保留,供无 Key 结构性 smoke。② 仲裁加权明细(`weightedBreakdown`)由代码预计算后回填,模型只输出 summary/score/裁决文本——防止模型自报数字算错,保证透明数据准确。③ 辩论攻防发言走 fast 非思考档(短输出,思考模型会被 reasoning 吃光正文),裁判走 step 指定的 strong 档(推理质量关键)。
+- 2026-06-11：⚠️ 中转站坑——本机 shell 预置了 `ANTHROPIC_BASE_URL=https://api.anthropic.com`(空 `ANTHROPIC_MODEL`),会**覆盖** `.env.local`,导致 Claude 走官方端点 404。跑 CLI 脚本须 `env -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL -u ANTHROPIC_API_KEY` 清除 shell 注入,让 `.env.local`(Vectrust 中转站)生效。Next.js 运行时不读 shell 环境,仅此类 CLI 脚本受影响。
+- 2026-06-11：⚠️ 已知待优化——跨域侦察兵(输出最大:桥梁+知识图谱)偶发"无法解析 JSON"(16384 token 被 reasoning + 大 JSON 吃光后截断,四级自愈也救不回);它是后台非关键不阻塞,但阶段 6/7 前应提高其 `maxOutputTokens` 或拆分输出。
+- 2026-06-11：超时经验值——思考模型(deepseek-v4-pro / claude-opus 思考版)大 prompt + 16K 输出单次 90-110s 是常态,"慢"非瞬时故障,单次长跑(180s)优于多次重试。L1 majority=2 保证慢 Agent 不阻塞推进,迟到结果仍入最终报告。`TIMEOUTS.agentMs`=120s/`arbitratorMs`=150s/总预算=480s。
 - 2026-06-10：仓库已推送 GitHub（`github.com/Joe7921/Novoscan-Cloud`,默认分支 `main`）;git 身份改为 `Joe7921 <zhouhaoyu6666@gmail.com>`,历史两次提交作者已改写。
 - 2026-06-10：阶段 2 决策——① 建表方式=用户提供 Supabase 连接凭据,我连库建表并验证（非让用户手动跑 SQL）;② pgvector 向量维度=**1536**（兼容 OpenAI text-embedding-3-small,一旦建表固定,改维度需迁移）。
 - 2026-06-10：记忆表由旧库纯 tsvector 升级为 **tsvector + pgvector 双检索**;旧表名 `agent_experiences` → 新表名 `agent_memory`。

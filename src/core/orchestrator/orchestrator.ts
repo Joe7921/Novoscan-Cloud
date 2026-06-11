@@ -9,11 +9,13 @@ import {
   type CallOptions,
   type ProviderId,
 } from "@/core/ai-client";
+import { getTool, type ToolContext } from "@/core/tools";
 import { getPipeline, type PipelineDefinition, type PipelineLayer, type PipelineStep } from "@/core/pipeline";
 import { TimeBudget } from "./budget";
 import { runWithTimeout, waitForN } from "./timeout";
 
-const TOTAL_MAX_DURATION = 300_000; // 总时间预算 5min
+// 总时间预算。阶段 5 实测:思考模型单 Agent 可达 90-110s,300s 会饿死末端仲裁,放宽到 8min。
+const TOTAL_MAX_DURATION = 480_000;
 const DEFAULT_PROVIDER: ProviderId = "deepseek"; // step 未指定 model 时的兜底
 
 export interface RunPipelineOptions {
@@ -42,25 +44,49 @@ export async function runPipeline(opts: RunPipelineOptions): Promise<FinalReport
       return;
     }
     const provider = step.model?.provider ?? DEFAULT_PROVIDER;
-    const ctx: StepContext = {
-      query: input.query,
-      input,
-      results,
-      provider,
-      model: step.model?.model,
-      onProgress: input.onProgress,
-      abortSignal: input.abortSignal,
-      callAI: (callOpts: Omit<CallOptions, "provider"> & { provider?: ProviderId }) =>
-        callWithFallback({
-          ...callOpts,
-          provider: callOpts.provider ?? provider,
-          model: callOpts.model ?? step.model?.model,
-        }),
+    const callAI = (callOpts: Omit<CallOptions, "provider"> & { provider?: ProviderId }) =>
+      callWithFallback({
+        ...callOpts,
+        provider: callOpts.provider ?? provider,
+        model: callOpts.model ?? step.model?.model,
+      });
+
+    // step 执行体:toolRef(阶段 5 主路径,与 Agentic 共享工具)优先,agentRef 兼容 stub。
+    const execute = (): Promise<unknown> => {
+      if (step.toolRef) {
+        const tool = getTool(step.toolRef);
+        const toolCtx: ToolContext = {
+          provider,
+          model: step.model?.model,
+          onProgress: input.onProgress,
+          abortSignal: input.abortSignal,
+          results,
+          callAI,
+        };
+        const rawInput = step.mapInput ? step.mapInput(results, input) : { query: input.query };
+        return tool.execute(tool.inputSchema.parse(rawInput), toolCtx);
+      }
+      if (!step.agentRef) {
+        throw new Error(`step ${step.id} 既无 toolRef 也无 agentRef`);
+      }
+      const ctx: StepContext = {
+        query: input.query,
+        input,
+        results,
+        provider,
+        model: step.model?.model,
+        onProgress: input.onProgress,
+        abortSignal: input.abortSignal,
+        callAI,
+      };
+      return getAgent(step.agentRef).run(ctx);
     };
-    const timeoutMs = step.timeoutMs ?? Math.max(1_000, Math.min(budget.remaining(), TIMEOUTS.agentMs));
+
+    // step 超时 = 自身上限(覆盖值或默认 agentMs)与剩余总预算取小,降级不崩由 catch 兜底。
+    const timeoutMs = Math.max(1_000, Math.min(budget.remaining(), step.timeoutMs ?? TIMEOUTS.agentMs));
     emit("agent_state", { agentId: step.id, status: "running" });
     try {
-      results[step.id] = await runWithTimeout(() => getAgent(step.agentRef).run(ctx), timeoutMs, step.id);
+      results[step.id] = await runWithTimeout(execute, timeoutMs, step.id);
       emit("agent_state", { agentId: step.id, status: "done" });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
