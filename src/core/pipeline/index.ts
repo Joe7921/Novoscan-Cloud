@@ -5,3 +5,4 @@ import "./pipelines/novoscan-default";
 export * from "./types";
 export * from "./registry";
 export * from "./define";
+export { novoscanDefaultPipeline } from "./pipelines/novoscan-default";

@@ -57,7 +57,7 @@ docs/                   ← 本套文档
 | 2 | 数据契约+记忆地基 | `lib/types` 核心类型；Supabase 建 `search_history`(缓存)+记忆表(pgvector 骨架) | 类型编译过；表可读写 |
 | 3 | 引擎骨架 | `core/pipeline` 管线接口+注册；`core/orchestrator` 分层骨架；`core/ai-client`(Vercel AI SDK + 信号量/降级/熔断) | 脚本能调通模型、跑通空管线 |
 | 4 | 双轨检索 | `core/search`：学术四源+产业多源，聚合去重+关键词+引擎选择 | 给关键词返回聚合结果 |
-| 5 | 第一条管线 | `core/agents` 各 Agent；L1(2/3 Majority/错开/模型分散)→L2→L2.5辩论(差>15)→L3仲裁(加权透明)→L4质检；时间预算+心跳+isFallback | 给定检索结果产出完整可信报告 |
+| 5 ✅ | 第一条管线 | `core/agents` 各 Agent(EngineTool)；L1(2/3 Majority/错开/模型分散)→L2→L2.5辩论(差>15)→L3仲裁(加权透明)→L4质检；时间预算+心跳+isFallback | ✅ 真实 AI 端到端 6/6 通过(smoke-agents.ts) |
 | 6 | analyze 接口 | `api/analyze`：检索→引擎→SSE(progress/agent_state/agent_thinking)；写缓存+记忆沉淀；预留 Inngest 接入点 | 前端/curl 收到流式事件并拿到报告 |
 | 7 | 分析板块前端 | 输入态(长文)/分析中态(进度+Agent卡+打字机)/报告态(评分+结论·6维雷达·关键发现·红旗·**相似论文可点溯源**·证据·**仲裁加权透明**·**辩论/异议/不确定性**·原始数据) | 三态顺畅，各模块正确呈现 |
 | 8 | 富输入 | `core/ingest`：unpdf/mammoth 文档 + Jina Reader 网页 → 文字；输入区支持贴文档/链接 | 上传 PDF 或贴链接能转为输入并跑通 |

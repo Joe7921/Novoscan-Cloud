@@ -56,11 +56,12 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 // 国产三家降级顺序(关键路径分散 + 失败降级)。
 export const FALLBACK_CHAIN: ProviderId[] = ["deepseek", "minimax", "moonshot"];
 
-// 超时(毫秒)。沿用旧库经验值。
+// 超时(毫秒)。阶段 5 实测校准:deepseek-v4-pro 等思考模型在大 prompt + 16K 输出下
+// 单次调用可达 90-110s(70s 必超时),故对齐旧库 AGENT_TIMEOUT(120s)并给仲裁(strong 思考模型)更大余量。
 export const TIMEOUTS = {
-  callMs: 30_000, // 单次调用默认超时
-  agentMs: 70_000, // 单个 Agent 预算上限
-  arbitratorMs: 95_000, // 仲裁员预算上限
+  callMs: 30_000, // 单次调用默认超时(简单短输出)
+  agentMs: 120_000, // 单个 Agent step 预算上限
+  arbitratorMs: 150_000, // 仲裁员 step 预算上限
 };
 
 // 重试与退避。

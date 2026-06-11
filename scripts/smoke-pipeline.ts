@@ -1,10 +1,28 @@
-// 验收②:用占位 stub Agent 跑通 Novoscan 默认管线整条流程,产出结构完整的报告。
+// 结构性验收:用占位 stub Agent 跑通 Novoscan 默认管线整条流程,产出结构完整的报告。
 // 不需要任何 API Key(stub 不调模型)。用法:npx tsx scripts/smoke-pipeline.ts
+// 阶段 5 起默认管线 step 已指向真子 Agent(toolRef),本脚本把 step 改回同名 stub(agentRef)
+// 只验编排与报告结构;真 Agent 验收见 scripts/smoke-agents.ts。
 
 import { runPipeline } from "@/core/orchestrator";
-import "@/core/agents"; // 注册占位 Agent
-import "@/core/pipeline"; // 注册默认管线
+import "@/core/agents"; // 注册 stub Agent + 真 Agent 工具
+import { novoscanDefaultPipeline, type PipelineDefinition } from "@/core/pipeline";
 import type { AgentInput } from "@/lib/types";
+
+// stub 克隆:step.id 与 stub Agent id 同名,直接以 agentRef 改走旧路径(不调模型)。
+const stubPipeline: PipelineDefinition = {
+  ...novoscanDefaultPipeline,
+  id: "novoscan-default-stub",
+  layers: novoscanDefaultPipeline.layers.map((layer) => ({
+    ...layer,
+    steps: layer.steps.map(({ id, critical, condition, timeoutMs }) => ({
+      id,
+      agentRef: id,
+      critical,
+      condition,
+      timeoutMs,
+    })),
+  })),
+};
 
 async function main(): Promise<void> {
   const input: AgentInput = {
@@ -36,8 +54,8 @@ async function main(): Promise<void> {
       console.log(`  [${event}]`, typeof data === "object" ? JSON.stringify(data) : data),
   };
 
-  console.log("① 运行 novoscan-default 管线(占位 Agent)…");
-  const report = await runPipeline({ pipeline: "novoscan-default", input });
+  console.log("① 运行 novoscan-default 管线(stub 克隆,占位 Agent)…");
+  const report = await runPipeline({ pipeline: stubPipeline, input });
 
   console.log("\n② 校验报告结构:");
   const checks: Array<[string, boolean]> = [

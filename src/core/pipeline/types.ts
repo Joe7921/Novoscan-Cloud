@@ -2,7 +2,7 @@
 // 把"分析流程"抽象成数据:哪几层、并行还是串行、调哪些 Agent、谁是关键路径、
 // 什么条件触发、每个 step 用哪个模型、评分权重多少——全部声明在配方里。
 
-import type { FinalReport, Language, LocalizedText } from "@/lib/types";
+import type { AgentInput, FinalReport, Language, LocalizedText } from "@/lib/types";
 import type { ProviderId } from "@/core/ai-client";
 
 /** step 使用的模型(provider + 可选模型名覆盖)。 */
@@ -13,7 +13,12 @@ export interface ModelSpec {
 
 export interface PipelineStep {
   id: string; // 结果索引键(assemble 按此取用)
-  agentRef: string; // 引用已注册的 Agent id
+  /** 引用已注册的 EngineTool id(阶段 5 起的主路径,与 Agentic 模式共享同一套工具) */
+  toolRef?: string;
+  /** 工具入参映射:从前序结果 + 原始输入构造该工具的 input(缺省只传 { query }) */
+  mapInput?: (results: Record<string, unknown>, input: AgentInput) => unknown;
+  /** 引用已注册的 Agent id(阶段 3 旧路径,保留以兼容 stub;toolRef 优先) */
+  agentRef?: string;
   model?: ModelSpec; // 缺省时 orchestrator 给默认 provider
   critical?: boolean; // 关键路径(参与 2/3 多数);否则后台非阻塞
   condition?: (results: Record<string, unknown>) => boolean; // 条件触发(如辩论)
