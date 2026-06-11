@@ -58,6 +58,7 @@
 
 ## 关键决策记录
 
+- 2026-06-11：用户指示——**不要复用旧库代码,全部手动重写**(已写入 CLAUDE.md 工作区规则,取代原"参考旧代码逻辑重写"条款)。待确认:是否追溯适用于阶段 5 已落地的 Agent 提示词(其参考了旧库 prompt 结构重写)。
 - 2026-06-11：阶段 5 决策——① Agent 落地为 `EngineTool`(非旧库的裸函数),管线 step 由 `agentRef` 升级为 `toolRef + mapInput`(入参从前序结果显式映射),与 Agentic 模式(施工第3步)共享同一套工具,零返工;阶段 3 stub 经 `agentRef` 保留,供无 Key 结构性 smoke。② 仲裁加权明细(`weightedBreakdown`)由代码预计算后回填,模型只输出 summary/score/裁决文本——防止模型自报数字算错,保证透明数据准确。③ 辩论攻防发言走 fast 非思考档(短输出,思考模型会被 reasoning 吃光正文),裁判走 step 指定的 strong 档(推理质量关键)。
 - 2026-06-11：⚠️ 中转站坑——本机 shell 预置了 `ANTHROPIC_BASE_URL=https://api.anthropic.com`(空 `ANTHROPIC_MODEL`),会**覆盖** `.env.local`,导致 Claude 走官方端点 404。跑 CLI 脚本须 `env -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL -u ANTHROPIC_API_KEY` 清除 shell 注入,让 `.env.local`(Vectrust 中转站)生效。Next.js 运行时不读 shell 环境,仅此类 CLI 脚本受影响。
 - 2026-06-11：⚠️ 已知待优化——跨域侦察兵(输出最大:桥梁+知识图谱)偶发"无法解析 JSON"(16384 token 被 reasoning + 大 JSON 吃光后截断,四级自愈也救不回);它是后台非关键不阻塞,但阶段 6/7 前应提高其 `maxOutputTokens` 或拆分输出。
