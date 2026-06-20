@@ -248,3 +248,38 @@ core/
 1. `npx tsc --noEmit` + `npm run build` 通过(类型 + 路由装配正确)。
 2. `scripts/smoke-analyze.ts`(直调 `runAnalysis`,不经 HTTP):首次跑出完整事件流(phase/search/agent_state/report/done)并拿到报告;二次同 query 命中缓存(`fromCache:true`,秒回不跑 AI);记忆表新增一行。**需 AI key + DB,真实跑一次有成本,由用户决定何时跑。**
 3. (可选)`npm run dev` 后 `curl -N` POST `/api/analyze` 收到流式事件。
+
+---
+
+## G. 阶段 8 详细设计(富输入 + 多模态理解桥,2026-06-20 敲定)
+
+> 目标:输入区支持附加 **PDF / Word / 图片 / 网页链接**,解析成富文字后喂现有分析链路。
+> 方向决策(用户 2026-06-20):
+> - **方案 B·附件式来源分离**:文件/链接作为"附件 chip"挂在输入区(正文与附件分离),提交时拼成带来源标注 `【附件N·类型:标题】` 的结构化输入。
+> - **图片走"甲·理解桥"**:入口处用强多模态模型把图片深度读成富文字(描述+OCR+图表数据+结构),再喂下游纯文本管线——8 个 Agent 与便宜分档体系**零改动**。非"乙·整条管线原生多模态"(成本大、要重构分档)。
+> - **vision 模型=复用已接的中转站 Claude**(claude-opus-4-7-thinking,多模态);once-per-image 成本可控。
+> - **加分项**:vision 同时封装为共享 `EngineTool`(category=utility,`vision.understand`),供将来 Agentic 模式按需"主动看图"。
+
+### G.1 分层(贴合"工具层统一",能力放共享上游)
+- **ai-client 底层**:`callVision`(call.ts)——有 `images` 时改用 `messages`(text + image parts),固定走多模态 provider(默认 anthropic),**不接文本降级链**(国产分档不支持看图)。复用现有 Key 池/信号量/熔断/超时。
+- **ingest 解析层**(`core/ingest/`,所有模式/管线上游):
+  - `pdf.ts`(unpdf)/ `docx.ts`(mammoth,仅 .docx)/ `web.ts`(Jina Reader `r.jina.ai`,免费免 key,可选 `JINA_API_KEY`)/ `image.ts`(callVision 理解桥,厚提取 prompt)。
+  - `index.ts`:`ingestFile`/`ingestUrl` 分派 + 类型识别(MIME→扩展名兜底)+ 大小守卫 + 清洗归一化 + 字数封顶;`types.ts` 集中限额 `INGEST_LIMITS`。
+- **工具层**:`core/tools/vision-tool.ts` 注册 `vision.understand`(import 即注册,接 core/tools/index)。
+- **接口**:`app/api/ingest/route.ts`(POST,非流式)——multipart 传文件 / JSON 传链接 → 返回 `IngestResult` 或 `{error}`+4xx/5xx(`IngestError.category`→400/502/500)。
+- **前端**:`lib/analyze/attachments.ts`(附件状态 + 调接口 + `buildCombinedQuery` 拼接);`input-state.tsx` 加附件条(上传/贴链接、chip 名称+字数+移除、加入即解析、独立显示解析中/成功/失败);i18n 扩 `board.analysis.attach`(zh/en)。`onSubmit(query)` 契约不变——附件在前端拼进 query,**analyze 接口/缓存/去重零改动**(缓存指纹自然覆盖附件内容)。
+
+### G.2 硬编码限额(用户 2026-06-20 同意,集中在 `INGEST_LIMITS`)
+- 单文档(PDF/Word)≤ 10MB;单图 ≤ 5MB(贴合多模态单图约束);单附件抽取 ≤ 5 万字(超出截断标注);附件数 ≤ 5;网页超时 30s;图片理解超时 120s。
+- 支持格式:PDF、.docx、png/jpg/jpeg/webp/gif、http(s) 链接;**不支持老 .doc**(mammoth 限制,报错引导转 .docx)。
+
+### G.3 本版范围的诚实交代(留作后续)
+- "来源可追溯"做到**附件分离 + 模型可见来源标注**(`【附件N:标题】`);**报告逐条结论自动溯源到具体附件**需改整条管线让 Agent 回传来源 ID,工程量大,留后续单独做。
+- 扫描件/纯图片 PDF 无文字层:本版返回"未提取到文字"提示,**不做 OCR**(可选后续给 PDF 接 vision 兜底)。
+- en 用户看到的 ingest 错误文案仍为中文(引擎层 message 为 zh),后续可 i18n 化。
+
+### G.4 验收
+1. `npx tsc --noEmit` + `npm run build` 双绿;`/api/ingest` 注册为动态路由。✅
+2. **vision 地基冒烟**(`scripts/smoke-vision.ts`,真实 AI):程序生成"左红右绿"PNG,中转站 Claude 3.2s 正确认出左红右绿(传输+空间感知都通)。✅
+3. **接口运行时抽查(免 AI 成本)**:dev 起服,校验路径 415/400/400 正确;Jina 抓 example.com 返回标题+正文(200);multipart 派发正确(unpdf 拒绝伪 PDF、.txt/.doc 友好报错)。⚠️ 本机 Clash 代理偶拦 localhost,curl 须加 `--noproxy '*'`。✅
+4. **待跑(需用户,有成本)**:真实 PDF/Word 抽取、图片→vision 真跑、附件拼接后端到端跑分析报告;mammoth(.docx)真实样本未单独跑过(tsc 通过、调用为一行)。

@@ -4,6 +4,8 @@
 
 ## 当前阶段
 
+**第一层·阶段 8(富输入 + 多模态理解桥)代码完成**(2026-06-20) —— 输入区支持附加 **PDF / Word / 图片 / 网页链接**(方案 B 附件式来源分离:正文与附件分离,提交时拼成带来源标注 `【附件N·类型:标题】` 的结构化输入,**analyze 接口/缓存零改动**)。图片走**"甲·理解桥"**:入口处用中转站 Claude(多模态)把图深度读成富文字(描述+OCR+图表数据+结构)再喂下游纯文本管线,8 Agent 与便宜分档体系**零改动**;**非**整条管线原生多模态(避免成本大涨+分档重构)。新增:`callVision`(ai-client,有图走 messages、固定多模态 provider、不接文本降级链);`core/ingest/`(pdf=unpdf / docx=mammoth / web=Jina Reader 免 key / image=理解桥;统一分派+大小守卫+清洗+字数封顶+集中限额);**vision 同时封装为共享 EngineTool**(`vision.understand`,category=utility,供将来 Agentic 模式"主动看图"——贴合工具层统一);`app/api/ingest`(multipart 传文件/JSON 传链接);前端 `attachments.ts` + `input-state.tsx` 附件条(加入即解析、独立显示解析中/成功/失败、灰阶红线)。**验收**:tsc+build 双绿;**vision 地基真跑**——"左红右绿"PNG 经中转站 Claude 3.2s 正确认出(传输+空间感知都通);接口运行时抽查(免 AI)校验 415/400 全对、Jina 抓 example.com 200、unpdf 拒伪 PDF、.txt/.doc 友好报错。**待跑(需用户,有成本)**:真实 PDF/Word/图片附件 + 端到端跑分析报告;mammoth 真实 .docx 样本未单独跑。方向决策见 G 部分 / 关键决策记录。
+
 **第一层·阶段 7(分析板块前端·三态)代码完成**(2026-06-15) —— 把 SSE 接口接成完整网页三态:输入态 → 分析中态(总进度 + phase + 8 张 Agent 状态卡 + 检索摘要 + 实时日志 + 取消)→ 报告态(结论概览卡:总分/推荐/可信度/共识 + recharts 灰阶六维雷达;分区折叠:学术[含相似论文可点溯源]/产业/竞品/创新[逐维 reasoning]/跨域/辩论异议/仲裁加权透明表/原始数据)+ 错误态。SSE 消费 Hook `useAnalyze`(useReducer 状态机 + `\n\n` 分帧 + 心跳行忽略 + AbortController 取消)。缓存命中显"缓存结果"徽标 + 刷新重生成;部分结果/降级显低置信横幅;dualTrack=null 兜底。**方向决策**(用户 2026-06-14):概览+分区折叠、引入 recharts(灰阶单色)、仅灰阶+红不引语义色。`npx tsc --noEmit` + `npm run build` 双绿;dev 起服首页 200、输入态渲染正常、日志零报错。**待跑**:端到端真跑一次(烧 AI,验报告态全模块 + recharts 雷达),时机由用户定。下一步:阶段 8(富输入)或先真跑联调阶段 6+7。
 
 **第一层·阶段 6(analyze SSE 接口 + 缓存/记忆沉淀)代码完成**(2026-06-13,务实版) —— 把阶段 5 已验证的引擎接成网页可调用的 SSE 流式接口。`POST /api/analyze`:校验入参 → `ReadableStream` 包 SSE,客户端断开转发 `abortSignal` 取消引擎。编排核心 `lib/analyze/run-analysis.ts`(引擎/界面分离,铁律②):查缓存(命中秒回)→ tsvector 记忆召回注入 `memoryContext` → 双轨检索 → `runPipeline(novoscan-default)` → 吐报告(附原始数据)→ best-effort 沉淀缓存(24h)+ 记忆(`reportToMemory` 映射)。**记忆注入零改动**:管线 `baseFields` 已透传 `memoryContext`、`shared.memoryBlock` 已注入 prompt。`npx tsc --noEmit` + `npm run build` 双绿,`/api/analyze` 注册为动态路由。**待跑**:`scripts/smoke-analyze.ts` 真实端到端验收(需 AI key + DB,有成本,等用户拍板何时跑)。pgvector 语义召回 + Inngest 异步化按用户决策留 TODO 接入点。下一步:阶段 7(分析板块前端三态)。
@@ -82,6 +84,9 @@
 - 后续阶段 8–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
+
+- 2026-06-20:阶段 8 四方向(用户拍板)——① 富输入=**方案 B 附件式来源分离**(非 A 解析填回输入框);② 输入类型=PDF+Word+图片+网页链接四类全做;③ 图片理解=**甲·理解桥**(入口 vision 转富文字喂下游文本管线,非乙·整条管线原生多模态——保便宜分档体系+控成本,以后可平滑升级到乙);④ vision 模型=**复用已接的中转站 Claude**(once-per-image 成本可控)。**加分项**:vision 同时封装为共享 `EngineTool`(`vision.understand`)供 Agentic 模式按需调用——因用户提醒"两大模式(管线/Agentic)+ 管线模式下多条管线 + 工具层统一",故图片能力放共享上游(ingest 入口 + 工具层),所有模式/管线零改动自动受益。硬编码限额(文档 10MB/图 5MB/抽取 5 万字/附件 5 个)用户同意,集中在 `INGEST_LIMITS`。
+- 2026-06-20:vision 传图地基已真跑验证——中转站 Vectrust(`api.openai-next.com/v1` + `claude-opus-4-7-thinking`)**支持图片输入**;`callVision` 用 Vercel AI SDK `messages`(text+image parts)。⚠️ 本机 Clash 代理(`HTTP_PROXY=127.0.0.1:7897`,`NO_PROXY=localhost`)偶发拦截 localhost 的 curl,测接口须加 `--noproxy '*'`。
 
 - 2026-06-14:阶段 7 三方向(用户拍板)——① 报告布局=概览+分区折叠;② 六维雷达=引入 recharts(用现有灰阶 chart token 配成单色,非默认彩色);③ 配色=仅灰阶+红(只用 destructive 红标红旗/风险,不引绿/琥珀语义色,不动设计风格)。引擎/界面分离:`useAnalyze` Hook 只消费 `AnalyzeStreamEvent`,不含业务逻辑。
 

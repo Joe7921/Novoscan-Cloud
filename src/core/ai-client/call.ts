@@ -1,7 +1,7 @@
 // 核心调用:统一的 AI 调用入口,叠加 Key 池 / 信号量 / 超时+中断 / 同模型重试 /
 // 限流退避 / 熔断 / 成本占位 / 降级链。参考旧库 ai-client 的 callAIRaw/callAIWithFallback。
 
-import { generateText } from "ai";
+import { generateText, type ModelMessage } from "ai";
 import {
   DEFAULT_MAX_OUTPUT_TOKENS,
   FALLBACK_CHAIN,
@@ -20,6 +20,14 @@ import { withSemaphore, type Priority } from "./semaphore";
 // providerOptions 复用 generateText 的入参类型,避免猜错形状(如 anthropic thinking)。
 type ProviderOptions = Parameters<typeof generateText>[0]["providerOptions"];
 
+/** 多模态图片输入(vision 调用用)。 */
+export interface VisionImage {
+  /** 图片数据:base64 字符串或字节数组(Vercel AI SDK 接受二者) */
+  data: string | Uint8Array;
+  /** MIME 类型,如 "image/png" / "image/jpeg" / "image/webp" */
+  mediaType: string;
+}
+
 export interface CallOptions {
   prompt: string;
   provider: ProviderId;
@@ -30,6 +38,8 @@ export interface CallOptions {
   temperature?: number;
   abortSignal?: AbortSignal;
   providerOptions?: ProviderOptions; // 透传给底层(如 { anthropic: { ... } })
+  /** 多模态图片:传入时改用 messages(text + image parts),仅多模态 provider(anthropic)支持 */
+  images?: VisionImage[];
 }
 
 export interface AIResult {
@@ -56,6 +66,23 @@ function isRateLimit(err: unknown): boolean {
   if (code === 429 || code === 503) return true;
   const name = (err as { name?: string })?.name ?? "";
   return /rate.?limit|overloaded/i.test(name);
+}
+
+// 把 prompt + 图片拼成单条 user message(text part 在前,image parts 随后)。
+function buildVisionMessages(prompt: string, images: VisionImage[]): ModelMessage[] {
+  return [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        ...images.map((img) => ({
+          type: "image" as const,
+          image: img.data,
+          mediaType: img.mediaType,
+        })),
+      ],
+    },
+  ];
 }
 
 // 合成"超时 + 外部中断"的 AbortSignal。
@@ -98,9 +125,14 @@ export async function callAI(opts: CallOptions): Promise<AIResult> {
       const model = getModel(provider, handle.key, opts.model);
       const { signal, cleanup } = makeSignal(timeoutMs, opts.abortSignal);
       try {
+        // 有图片走 messages(text + image parts);否则保留已验证的 prompt 路径不变。
+        const inputArg =
+          opts.images && opts.images.length > 0
+            ? { messages: buildVisionMessages(prompt, opts.images) }
+            : { prompt };
         const result = await generateText({
           model,
-          prompt,
+          ...inputArg,
           maxOutputTokens,
           ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
           ...(opts.providerOptions ? { providerOptions: opts.providerOptions } : {}),
@@ -133,6 +165,17 @@ export async function callAI(opts: CallOptions): Promise<AIResult> {
     recordFailure(provider);
     throw lastErr;
   });
+}
+
+/**
+ * 多模态调用(图片理解)。固定走多模态 provider(默认 anthropic),
+ * **不接文本降级链**——国产分档模型不支持看图,降级只会必然失败。
+ * 仅做单 provider + 同模型重试(callAI 内置)。
+ */
+export function callVision(
+  opts: Omit<CallOptions, "provider"> & { provider?: ProviderId },
+): Promise<AIResult> {
+  return callAI({ ...opts, provider: opts.provider ?? "anthropic" });
 }
 
 /** 带降级链的调用:首选失败/熔断时依次降级。anthropic 可降级到国产链。 */
