@@ -202,3 +202,49 @@ core/
 1. ✅ `npx tsx scripts/smoke-agents.ts` 真实 AI 端到端 **6/6 通过**:四核心 Agent 真实完成(学术 65/产业 30/竞品 85/创新 28,独立评分)、六维雷达非退化、辩论真实触发 3 轮、仲裁产出「谨慎考虑 42 分」、质检 passed=true,全程无 `isStub`。
 2. ✅ `npx tsc --noEmit` 通过;`smoke-pipeline.ts` 改为 stub 克隆管线只验结构(无 Key 可跑)。
 3. ⚠️ 已知待优化(阶段 6 前):跨域侦察兵(输出最大)偶发 JSON 截断解析失败,需提高其 `maxOutputTokens` 或拆分输出;CLI 跑脚本须清除 shell 预置的 `ANTHROPIC_*` 环境变量(详见 PROGRESS 决策记录)。
+
+---
+
+## F. 阶段 6 详细设计(analyze 接口 + 缓存/记忆沉淀,2026-06-13 敲定,务实版)
+
+> 目标:把阶段 5 已验证的引擎接成网页可调用的 **SSE 流式接口**,并接通缓存读写与记忆沉淀。纯后端,前端在阶段 7。
+> **范围决策(用户 2026-06-13):务实版**——记忆召回先用现成 tsvector 全文检索(`searchMemories`)注入 Agent;pgvector 语义召回、Inngest 异步队列**只留 TODO 接入点**,不在本阶段实现(避免额外 embedding key/成本)。
+
+### F.1 关键利好(已核实,无需改引擎)
+- 记忆注入零改动:管线 `baseFields` 已透传 `input.memoryContext`,`shared.memoryBlock` 已把它注入各 Agent prompt。本阶段只需在调用 `runPipeline` 时把召回的经验拼成 `memoryContext` 传入。
+- 缓存/记忆封装现成:`lib/data/search-history.ts`(`getCachedReport`/`saveCachedReport`)、`lib/data/agent-memory.ts`(`searchMemories`/`saveExperience`)阶段 2 已写好并体检通过。
+- 注册副作用:`import "@/core/agents"` 注册真子 Agent 工具,`import "@/core/pipeline"` 注册 `novoscan-default`。
+
+### F.2 引擎/界面分离(铁律②)
+核心编排逻辑放 `src/lib/analyze/`(纯函数 + 回调,不依赖 HTTP),路由 `src/app/api/analyze/route.ts` 只负责把事件包成 SSE。这样可被脚本直接调用测试,也为将来 Inngest 异步化留出干净切面。
+
+- `lib/analyze/types.ts`:`AnalyzeRequest`(query/language/mode/modelProvider/refresh/domainHint)、`AnalyzeStreamEvent`(见 F.4)。
+- `lib/analyze/run-analysis.ts`:`runAnalysis(req, emit, signal)`——缓存→记忆召回→双轨检索→管线→沉淀,全程通过 `emit(event)` 吐进度;引擎原生 `onProgress(ev,data)` 经 `forwardEngineEvent` 转成流事件。
+- `app/api/analyze/route.ts`:`POST` 校验入参 → `ReadableStream` 包 SSE;`req.signal` 转发为引擎 `abortSignal`(客户端断开即取消);客户端断开后 `emit` 静默丢弃。
+
+### F.3 接口流程(runAnalysis)
+1. **查缓存**(非 `refresh` 时):命中且未过期 → 直接 `emit` report(`fromCache:true`)+ done,秒回不跑 AI。缓存查询出错只记日志、继续跑实时。
+2. **记忆召回**:`searchMemories(query,5)` → 拼 `memoryContext` 注入管线;`emit` memory 事件(用了几条/相关历史 query)。best-effort,失败不阻塞。
+3. **双轨检索**:`searchDualTrack`,进度转流;`emit` search 汇总(可信度/学术/网页/开源数)。
+4. **跑管线**:`runPipeline(novoscan-default)`,带 `memoryContext` + `abortSignal`,进度(progress/log/agent_state/agent_thinking)转流。超时降级由引擎内部兜底,返回部分报告不抛。
+5. **吐报告**:`emit` report(`fromCache:false`,附 `dualTrack` 原始数据供前端渲染)。
+6. **沉淀**(best-effort,放在吐报告之后,不拖慢 UX):`saveCachedReport` 写 24h 缓存;`saveExperience` 把报告映射为记忆行(`reportToMemory`:仲裁分→final_score、nextSteps→lessons_learned、质检 issues/warnings→quality_flags、topConcepts→tags、各 Agent 评分摘要→agent_judgments)。客户端已断开则跳过沉淀。
+7. `emit` done。
+
+### F.4 SSE 协议
+每条 `data: {json}\n\n`,带 `type` 判别:
+- 引擎透传:`progress`(value 0-100)、`log`(message)、`agent_state`(agentId/status)、`agent_thinking`(agentId/text)。
+- 路由级:`phase`(cache/memory/search/pipeline/persist 阶段标记)、`memory`、`search`、`report`(report+dualTrack+fromCache+elapsedMs)、`error`、`done`。
+- 前端(阶段 7)据 `agent_state`/`agent_thinking`/`progress` 驱动"分析中态",`report` 驱动"报告态"。
+- 连接保活:路由每 15s 发一条 SSE 注释行心跳(`: ping`),防单个 AI 调用静默 90-110s 时被反代/浏览器空闲断连;前端无需处理注释行。
+- ⚠️ **缓存命中契约**:`report.fromCache===true` 时 `dualTrack` **必为 null**,且**不会有 search/memory/agent_state 事件**(秒回不跑检索/管线)。阶段 7 前端渲染"双轨可信度/原始数据"卡片须对 `dualTrack` 空值兜底。
+
+### F.5 留作 TODO 的接入点(本阶段不实现,代码注释标注)
+- **Inngest 异步化**:`runAnalysis` 目前在请求内联跑(长任务~数分钟)。生产应改为派发 Inngest 后台函数,前端经 channel 收进度。切面已在 `lib/analyze` 与 route 之间留好。
+- **pgvector 语义召回**:`searchMemories` 现走 tsvector;接 embedding 后升级为向量+全文混合检索,并在沉淀时回填 `embedding`。
+- **检索层中断**:`searchDualTrack` 暂不接收 `abortSignal`,客户端在检索阶段断开时当前检索会跑完(随后管线被 `signal.aborted` 边界拦下不启动)。后续给搜索聚合层透传 `abortSignal`,实现检索阶段即时中断。
+
+### F.6 验收
+1. `npx tsc --noEmit` + `npm run build` 通过(类型 + 路由装配正确)。
+2. `scripts/smoke-analyze.ts`(直调 `runAnalysis`,不经 HTTP):首次跑出完整事件流(phase/search/agent_state/report/done)并拿到报告;二次同 query 命中缓存(`fromCache:true`,秒回不跑 AI);记忆表新增一行。**需 AI key + DB,真实跑一次有成本,由用户决定何时跑。**
+3. (可选)`npm run dev` 后 `curl -N` POST `/api/analyze` 收到流式事件。

@@ -4,7 +4,11 @@
 
 ## 当前阶段
 
-**第一层·阶段 5(第一条管线·真子 Agent)已完成**(2026-06-11) —— 8 个占位 stub 全部替换为真子 Agent(实现为 `EngineTool`,category=agent),`novoscan-default` 管线升级 `toolRef + mapInput`,经真实 AI 端到端跑通:双轨检索 → L1(学术/产业/竞品/跨域)→ L2 创新评估(六维雷达)→ L2.5 条件辩论(NovoDebate 多轮真对抗)→ L3 仲裁(透明加权)→ L4 质检。**实测验收 6/6 通过**:四核心 Agent 真实完成(学术 65/产业 30/竞品 85/创新 28,各自独立评分)、六维雷达非退化、辩论触发 3 轮、仲裁产出「谨慎考虑 42 分」决策摘要、质检 passed=true。下一步:阶段 6(analyze SSE 接口 + 缓存/记忆沉淀)。
+**第一层·阶段 7(分析板块前端·三态)代码完成**(2026-06-15) —— 把 SSE 接口接成完整网页三态:输入态 → 分析中态(总进度 + phase + 8 张 Agent 状态卡 + 检索摘要 + 实时日志 + 取消)→ 报告态(结论概览卡:总分/推荐/可信度/共识 + recharts 灰阶六维雷达;分区折叠:学术[含相似论文可点溯源]/产业/竞品/创新[逐维 reasoning]/跨域/辩论异议/仲裁加权透明表/原始数据)+ 错误态。SSE 消费 Hook `useAnalyze`(useReducer 状态机 + `\n\n` 分帧 + 心跳行忽略 + AbortController 取消)。缓存命中显"缓存结果"徽标 + 刷新重生成;部分结果/降级显低置信横幅;dualTrack=null 兜底。**方向决策**(用户 2026-06-14):概览+分区折叠、引入 recharts(灰阶单色)、仅灰阶+红不引语义色。`npx tsc --noEmit` + `npm run build` 双绿;dev 起服首页 200、输入态渲染正常、日志零报错。**待跑**:端到端真跑一次(烧 AI,验报告态全模块 + recharts 雷达),时机由用户定。下一步:阶段 8(富输入)或先真跑联调阶段 6+7。
+
+**第一层·阶段 6(analyze SSE 接口 + 缓存/记忆沉淀)代码完成**(2026-06-13,务实版) —— 把阶段 5 已验证的引擎接成网页可调用的 SSE 流式接口。`POST /api/analyze`:校验入参 → `ReadableStream` 包 SSE,客户端断开转发 `abortSignal` 取消引擎。编排核心 `lib/analyze/run-analysis.ts`(引擎/界面分离,铁律②):查缓存(命中秒回)→ tsvector 记忆召回注入 `memoryContext` → 双轨检索 → `runPipeline(novoscan-default)` → 吐报告(附原始数据)→ best-effort 沉淀缓存(24h)+ 记忆(`reportToMemory` 映射)。**记忆注入零改动**:管线 `baseFields` 已透传 `memoryContext`、`shared.memoryBlock` 已注入 prompt。`npx tsc --noEmit` + `npm run build` 双绿,`/api/analyze` 注册为动态路由。**待跑**:`scripts/smoke-analyze.ts` 真实端到端验收(需 AI key + DB,有成本,等用户拍板何时跑)。pgvector 语义召回 + Inngest 异步化按用户决策留 TODO 接入点。下一步:阶段 7(分析板块前端三态)。
+
+**第一层·阶段 5(第一条管线·真子 Agent)已完成**(2026-06-11) —— 8 个占位 stub 全部替换为真子 Agent(实现为 `EngineTool`,category=agent),`novoscan-default` 管线升级 `toolRef + mapInput`,经真实 AI 端到端跑通:双轨检索 → L1(学术/产业/竞品/跨域)→ L2 创新评估(六维雷达)→ L2.5 条件辩论(NovoDebate 多轮真对抗)→ L3 仲裁(透明加权)→ L4 质检。**实测验收 6/6 通过**:四核心 Agent 真实完成(学术 65/产业 30/竞品 85/创新 28,各自独立评分)、六维雷达非退化、辩论触发 3 轮、仲裁产出「谨慎考虑 42 分」决策摘要、质检 passed=true。
 
 ## 已完成
 
@@ -54,10 +58,34 @@
   - [x] **超时校准(实测)**:思考模型大 prompt+16K 输出单次可达 90-110s。`TIMEOUTS.agentMs` 70→120s、`arbitratorMs` 95→150s、总预算 300→480s;学术/跨域(大输出)单 step 放宽到 200s。
   - [x] 辩论 GIGO 修复:`isFallback` 降级占位 Agent 不参与辩论(避免逼模型编证据)。
   - [x] 验收:`scripts/smoke-agents.ts` 真实 AI 端到端 6/6 通过;`scripts/smoke-pipeline.ts` 改为 stub 克隆管线只验结构(无 Key 可跑);`npx tsc --noEmit` 通过。
-- 后续阶段 6–9 见 `PLAN.md` B 部分。
+- [x] **第一层·阶段 6:analyze SSE 接口 + 缓存/记忆沉淀**(2026-06-13,代码完成,详见 `PLAN.md` F 部分)
+  - [x] `lib/analyze/types.ts`:`AnalyzeRequest` + `AnalyzeStreamEvent`(引擎透传 progress/log/agent_state/agent_thinking + 路由级 phase/memory/search/report/error/done)。
+  - [x] `lib/analyze/run-analysis.ts`:`runAnalysis(req,emit,signal)` 编排——缓存→记忆召回(tsvector)→双轨检索→管线→吐报告→沉淀;`forwardEngineEvent` 转引擎进度,`reportToMemory` 映射沉淀,缓存/记忆全 best-effort 不阻塞。
+  - [x] `app/api/analyze/route.ts`:`POST` 校验(query≥4 字)→ SSE `ReadableStream`,`req.signal` 转 `abortSignal`,客户端断开停写 + 跳过沉淀。
+  - [x] `scripts/smoke-analyze.ts`:直调验收脚本(首次跑完整管线 + 二次命中缓存 + 沉淀)。
+  - [x] **全量自查 + 独立审查 Agent 交叉复查后修复**(2026-06-14):① `modelProvider` 加白名单校验(防非法值污染缓存/记忆两表);② 路由加 15s SSE 心跳保活(防单 AI 调用静默 90-110s 被反代/浏览器断连);③ 长文 query 截断到 400 字再喂 tsvector(防 plainto_tsquery 超长报错致记忆召回静默失效);④ `reportToMemory` 数组字段全加 `?? []` 兜底(防降级时沉淀静默失败);⑤ 检索后加 `signal.aborted` 边界,断开则不启动昂贵管线;⑥ `forwardEngineEvent` log 的 `JSON.stringify` 加 try/catch;⑦ **smoke 脚本真查库**验证记忆沉淀(原脚本声称"记忆表新增一行"却从没碰过 DB——核心偷懒点已修),缓存命中改用 `fromCache` 强判据。
+  - [x] 验收:`npx tsc --noEmit` + `npm run build` 双绿,`/api/analyze` 注册为动态路由。**运行时冒烟(免 AI 成本)**:dev 起服,curl 三条 400 校验全对(空 query/非法 JSON/过短);合法 query 短连 4s,SSE 响应头 + `data:` 分帧 + phase 事件正确流出,检索阶段断开后管线未启动(abort 边界生效、无报错、未烧 AI)。
+  - [ ] **待跑(需用户,有成本)**:`npx tsx scripts/smoke-analyze.ts` 真实端到端(AI key + DB);或 `npm run dev` 后 `curl -N` POST。
+  - [ ] **留 TODO**:pgvector 语义召回(现 tsvector)、Inngest 异步化(现请求内联)——按用户「务实版」决策本阶段不实现,接入点已留好。
+- [x] **第一层·阶段 7:分析板块前端·三态**(2026-06-15,代码完成)
+  - [x] SSE 消费 Hook `lib/analyze/use-analyze.ts`(useReducer 四态机:idle/analyzing/done/error;解析 `data:` 行、忽略心跳、半包 buffer;AbortController cancel/reset)。
+  - [x] UI 基础件 `components/ui/`:card/badge/progress/separator(手写、灰阶、贴 button 风格)。
+  - [x] 三态组件 `components/boards/analysis/`:input-state / analyzing-state / agent-card;`analysis-board` 容器据 status 切四态 + 刷新/重试。
+  - [x] 报告组件 `components/report/`:report-view(根)/ verdict-overview(结论卡)/ radar-chart(recharts 灰阶)/ collapsible-section / score-bar / field-list / confidence-badge / agent-section / similar-papers / arbitration-section / debate-section / raw-data-section。
+  - [x] i18n:`dictionaries.ts` 扩 `board.analysis`(三态文案)+ 新增 `report` 段(zh/en TS 强制对齐)。
+  - [x] 依赖:`recharts@^3`(唯一新增,React19/Next16 兼容)。
+  - [x] 验收:tsc + build 双绿;dev 首页 200、输入态正常、零报错。
+  - [x] **端到端真跑联调成功**(2026-06-15):经真实 `POST /api/analyze` SSE,223s 完整跑通——5 phase + 16 agent_state(8 Agent×起止)+ search + report + done;8 个 Agent 全真实(无 STUB/降级):学术 86 / 产业 0 / 竞品 88 / 创新 8、5 篇相似论文、六维雷达非退化、辩论触发 1 场、仲裁 42「不推荐」走中转站 `claude-opus-4-7-thinking`、加权明细透明、跨域 6 桥、质检 passed。**缓存命中验证**:同 query 二次 fromCache=true、1.5s(vs 223s)、同分 42。报告态全模块数据契约正确。
+  - 红线遵守:未改 globals.css 主题/layout/sidebar/app-shell;配色严格灰阶+红。
+  - ✅ **"乱码"问题已查清=测试工具 artifact,非引擎 bug**(2026-06-15 复盘,纠正先前误判):echo 服务器实测——Bash 工具在中文 Windows 环境下发 curl,命令里的中文被编成 **GBK**(如"用"= `d3c3`,正确 UTF-8 应为 `e794a8`)送出,服务端按 UTF-8 解码 → 真乱码(解码串含 U+FFFD)。三个 L1 Agent **没有幻觉**,是诚实报告了它们收到的乱码输入,引擎反而很稳健(未崩、从证据反推主题、如实标注)。**应用无此 bug**:浏览器 `fetch + JSON.stringify` 恒发 UTF-8。AI 调用层回显测试(fast/standard 双档)中文原样返回,确认调用链不乱码。⚠️ 推论:后续所有用 Bash/curl 发中文请求体的测试都会踩 GBK 坑,须从 UTF-8 文件 `--data-binary @file` 发,或直接浏览器测。
+  - ⚠️ 次要:产业轨 0 结果(网页0/开源0)=大概率未配 Brave/Serper/Tavily 等产业搜索 key,可选补配(非 bug,无 key 自动跳过是设计)。
+- 后续阶段 8–9 见 `PLAN.md` B 部分。
 
 ## 关键决策记录
 
+- 2026-06-14:阶段 7 三方向(用户拍板)——① 报告布局=概览+分区折叠;② 六维雷达=引入 recharts(用现有灰阶 chart token 配成单色,非默认彩色);③ 配色=仅灰阶+红(只用 destructive 红标红旗/风险,不引绿/琥珀语义色,不动设计风格)。引擎/界面分离:`useAnalyze` Hook 只消费 `AnalyzeStreamEvent`,不含业务逻辑。
+
+- 2026-06-13：阶段 6 范围——用户选 **务实版**:记忆召回先用现成 tsvector 全文检索注入 Agent;pgvector 语义召回、Inngest 异步队列只留 TODO 接入点(避免额外 embedding key/成本)。引擎/界面分离落地:编排逻辑放 `lib/analyze`(纯回调),路由 `api/analyze` 只做 HTTP↔SSE 转换,便于脚本直测与将来 Inngest 异步化。
 - 2026-06-11：用户指示——**不要复用旧库代码,全部手动重写**(已写入 CLAUDE.md 工作区规则,取代原"参考旧代码逻辑重写"条款)。待确认:是否追溯适用于阶段 5 已落地的 Agent 提示词(其参考了旧库 prompt 结构重写)。
 - 2026-06-11：阶段 5 决策——① Agent 落地为 `EngineTool`(非旧库的裸函数),管线 step 由 `agentRef` 升级为 `toolRef + mapInput`(入参从前序结果显式映射),与 Agentic 模式(施工第3步)共享同一套工具,零返工;阶段 3 stub 经 `agentRef` 保留,供无 Key 结构性 smoke。② 仲裁加权明细(`weightedBreakdown`)由代码预计算后回填,模型只输出 summary/score/裁决文本——防止模型自报数字算错,保证透明数据准确。③ 辩论攻防发言走 fast 非思考档(短输出,思考模型会被 reasoning 吃光正文),裁判走 step 指定的 strong 档(推理质量关键)。
 - 2026-06-11：⚠️ 中转站坑——本机 shell 预置了 `ANTHROPIC_BASE_URL=https://api.anthropic.com`(空 `ANTHROPIC_MODEL`),会**覆盖** `.env.local`,导致 Claude 走官方端点 404。跑 CLI 脚本须 `env -u ANTHROPIC_BASE_URL -u ANTHROPIC_MODEL -u ANTHROPIC_API_KEY` 清除 shell 注入,让 `.env.local`(Vectrust 中转站)生效。Next.js 运行时不读 shell 环境,仅此类 CLI 脚本受影响。
